@@ -25,7 +25,8 @@ if ! git -C "${linux_src}" rev-parse --git-dir >/dev/null 2>&1 ||
 	git -C "${root}" submodule update --init linux qemu
 fi
 if [ ! -f "${qemu_src}/subprojects/keycodemapdb/README" ]; then
-	git -C "${qemu_src}" submodule update --init subprojects/keycodemapdb
+	git -C "${qemu_src}" submodule update --init --depth=1 \
+		subprojects/keycodemapdb
 fi
 
 if [ "$(git -C "${linux_src}" rev-parse HEAD)" != "${LINUX_V6_COMMIT}" ]; then
@@ -39,7 +40,7 @@ fi
 
 if ! git -C "${linux_src}" cat-file -e "${LINUX_V5_COMMIT}^{commit}" 2>/dev/null; then
 	echo "==> Fetching the exact Linux v5 control revision"
-	git -C "${linux_src}" fetch --no-tags origin "${LINUX_V5_REF}"
+	git -C "${linux_src}" fetch --no-tags --depth=1 origin "${LINUX_V5_REF}"
 fi
 if ! git -C "${linux_src}" cat-file -e "${LINUX_V5_COMMIT}^{commit}" 2>/dev/null; then
 	echo "LINUX_V5_COMMIT is unavailable after fetching ${LINUX_V5_REF}" >&2

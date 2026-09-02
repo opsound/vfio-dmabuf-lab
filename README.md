@@ -24,6 +24,9 @@ binutils, flex, bison, bc, OpenSSL and ELF development files, Python, Meson,
 Ninja, pkg-config, GLib and Pixman development files, `cpio`, gzip, and access
 to `/dev/kvm`.
 
+The Linux and QEMU submodules are shallow. The build fetches only the exact v5
+control tip in addition to the v6 gitlink, rather than cloning full histories.
+
 Useful narrower commands:
 
 ```sh
