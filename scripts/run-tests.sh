@@ -61,7 +61,7 @@ run_mode()
 		-nodefaults -no-user-config -no-reboot \
 		-display none -monitor none -serial "file:${log}" \
 		-kernel "${kernel}" -initrd "${initramfs}" \
-		-append "console=ttyS0 earlyprintk=serial panic=-1 oops=panic intel_iommu=on iommu=pt vfio_iommu_type1.allow_unsafe_interrupts=1 vfio_test=${mode}" \
+		-append "console=ttyS0 earlyprintk=serial panic=-1 oops=panic intel_iommu=on iommu=pt vfio_iommu_type1.allow_unsafe_interrupts=1 -- ${mode}" \
 		-device intel-iommu,intremap=on,caching-mode=on \
 		-device pcie-root-port,id=rp1,chassis=1,slot=1 \
 		-device "${device}" </dev/null >> "${log}" 2>&1

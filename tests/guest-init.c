@@ -223,35 +223,6 @@ static int run_legacy_export(void)
 	return 1;
 }
 
-static const char *test_mode(void)
-{
-	static char mode[32];
-	char command_line[4096];
-	char *start, *end;
-	ssize_t length;
-	int fd;
-
-	fd = open("/proc/cmdline", O_RDONLY);
-	if (fd < 0)
-		return NULL;
-	length = read(fd, command_line, sizeof(command_line) - 1);
-	close(fd);
-	if (length < 0)
-		return NULL;
-	command_line[length] = '\0';
-	start = strstr(command_line, "vfio_test=");
-	if (!start)
-		return NULL;
-	start += strlen("vfio_test=");
-	end = strpbrk(start, " \t\n");
-	length = end ? end - start : (ssize_t)strlen(start);
-	if (length <= 0 || (size_t)length >= sizeof(mode))
-		return NULL;
-	memcpy(mode, start, length);
-	mode[length] = '\0';
-	return mode;
-}
-
 static void finish(const char *marker, int status)
 {
 	printf("%s=%s\n", marker, status ? "FAIL" : "PASS");
@@ -263,7 +234,7 @@ static void finish(const char *marker, int status)
 		pause();
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	const char *mode;
 	int status = 1;
@@ -278,11 +249,11 @@ int main(void)
 	    mount_one("devtmpfs", "/dev", "devtmpfs"))
 		finish("VFIO_LAB_RESULT", 1);
 
-	mode = test_mode();
-	if (!mode) {
-		fprintf(stderr, "missing vfio_test= kernel argument\n");
+	if (argc != 2) {
+		fprintf(stderr, "usage: /init TEST_MODE\n");
 		finish("VFIO_LAB_RESULT", 1);
 	}
+	mode = argv[1];
 	printf("VFIO_TEST_MODE=%s\n", mode);
 
 	if (!strcmp(mode, "nvgrace")) {
