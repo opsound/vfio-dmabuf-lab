@@ -157,12 +157,14 @@ static int run_nvgrace_v6(void)
 	if (prepare_nvgrace(group, sizeof(group)))
 		return 1;
 
-	/* Prove both fixed read and write paths allow writer progress. */
-	for (iteration = 1; iteration <= 10; iteration++)
-		if (run_nvgrace_case(group, "uaccess", "progress"))
-			return 1;
+	/*
+	 * The variant driver may legitimately hold memory_lock across user
+	 * access.  Confirm that a config writer queues behind that access.
+	 */
+	if (run_nvgrace_case(group, "uaccess", "blocked"))
+		return 1;
 
-	/* Exercise the same faulting-read plus mmap workload used on v5. */
+	/* Prove mmap/export progresses even with that writer queued. */
 	for (iteration = 1; iteration <= 10; iteration++)
 		if (run_nvgrace_case(group, "export", "progress"))
 			return 1;

@@ -84,7 +84,7 @@ run_mode()
 		if [ "${qemu_status}" -eq 124 ] &&
 		   grep -q 'possible circular locking dependency detected' "${log}" &&
 		   grep -q '\*\*\* DEADLOCK \*\*\*' "${log}" &&
-		   grep -q 'export-v5-shape: mmap blocked while user fault is unresolved' "${log}"; then
+		   grep -q 'export: writer blocked, mmap blocked while user fault is unresolved' "${log}"; then
 			echo "PASS: ${mode}; expected deadlock reproduced"
 			return 0
 		fi
