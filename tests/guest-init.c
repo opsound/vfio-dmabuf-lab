@@ -142,16 +142,14 @@ static int prepare_nvgrace(char *group, size_t group_size)
 		fprintf(stderr, "nvgrace driver is not built in\n");
 		return -1;
 	}
-	if (write_text("/sys/module/nvgrace_gpu_vfio_pci/parameters/test_mode",
-		       "1") ||
-	    bind_driver("nvgrace_gpu_vfio_pci") ||
+	if (bind_driver("nvgrace_gpu_vfio_pci") ||
 	    iommu_group(group, group_size))
 		return -1;
 	printf("NVGRACE_TEST_BDF=%s group=%s\n", BDF, group);
 	return 0;
 }
 
-static int run_nvgrace(void)
+static int run_nvgrace_v6(void)
 {
 	char group[32];
 	int iteration;
@@ -159,26 +157,12 @@ static int run_nvgrace(void)
 	if (prepare_nvgrace(group, sizeof(group)))
 		return 1;
 
-	/* First prove that the harness can recreate the old lock stall. */
-	if (write_text("/sys/module/nvgrace_gpu_vfio_pci/parameters/test_faulting_uaccess",
-		       "1") ||
-	    run_nvgrace_case(group, "uaccess", "blocked"))
-		return 1;
-
-	/* Then prove both fixed read and write paths allow writer progress. */
-	if (write_text("/sys/module/nvgrace_gpu_vfio_pci/parameters/test_faulting_uaccess",
-		       "0"))
-		return 1;
+	/* Prove both fixed read and write paths allow writer progress. */
 	for (iteration = 1; iteration <= 10; iteration++)
 		if (run_nvgrace_case(group, "uaccess", "progress"))
 			return 1;
 
-	/* Finally construct reader -> writer -> mmap/export contention. */
-	if (write_text("/sys/module/nvgrace_gpu_vfio_pci/parameters/test_faulting_uaccess",
-		       "1") ||
-	    write_text("/sys/module/vfio_pci_core/parameters/test_export_memory_lock",
-		       "0"))
-		return 1;
+	/* Exercise the same faulting-read plus mmap workload used on v5. */
 	for (iteration = 1; iteration <= 10; iteration++)
 		if (run_nvgrace_case(group, "export", "progress"))
 			return 1;
@@ -205,21 +189,17 @@ static int run_dmabuf(void)
 	return 0;
 }
 
-static int run_legacy_export(void)
+static int run_nvgrace_v5(void)
 {
 	char group[32];
 
-	if (prepare_nvgrace(group, sizeof(group)) ||
-	    write_text("/sys/module/nvgrace_gpu_vfio_pci/parameters/test_faulting_uaccess",
-		       "1") ||
-	    write_text("/sys/module/vfio_pci_core/parameters/test_export_memory_lock",
-		       "1"))
+	if (prepare_nvgrace(group, sizeof(group)))
 		return 1;
-	printf("NVGRACE_LEGACY_EXPORT_CONTROL_START bdf=%s group=%s\n", BDF,
+	printf("NVGRACE_V5_CONTROL_START bdf=%s group=%s\n", BDF,
 	       group);
 	if (run_nvgrace_case(group, "export", "blocked"))
 		return 1;
-	fprintf(stderr, "legacy export unexpectedly returned\n");
+	fprintf(stderr, "v5 export unexpectedly returned\n");
 	return 1;
 }
 
@@ -256,15 +236,15 @@ int main(int argc, char **argv)
 	mode = argv[1];
 	printf("VFIO_TEST_MODE=%s\n", mode);
 
-	if (!strcmp(mode, "nvgrace")) {
-		status = run_nvgrace();
-		finish("NVGRACE_UACCESS_RESULT", status);
+	if (!strcmp(mode, "nvgrace-v6")) {
+		status = run_nvgrace_v6();
+		finish("NVGRACE_V6_RESULT", status);
+	} else if (!strcmp(mode, "nvgrace-v5")) {
+		status = run_nvgrace_v5();
+		finish("NVGRACE_V5_RESULT", status);
 	} else if (!strcmp(mode, "dmabuf")) {
 		status = run_dmabuf();
 		finish("VFIO_DMABUF_RESULT", status);
-	} else if (!strcmp(mode, "legacy-export")) {
-		status = run_legacy_export();
-		finish("NVGRACE_LEGACY_EXPORT_RESULT", status);
 	} else {
 		fprintf(stderr, "unknown vfio_test mode: %s\n", mode);
 		finish("VFIO_LAB_RESULT", 1);

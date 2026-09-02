@@ -18,7 +18,7 @@ test)
 	"${root}/scripts/run-tests.sh" "${2:-all}"
 	;;
 *)
-	echo "usage: $0 [all|build|test [all|nvgrace|dmabuf|legacy-export]]" >&2
+	echo "usage: $0 [all|build|test [all|nvgrace-v6|dmabuf|nvgrace-v5]]" >&2
 	exit 2
 	;;
 esac

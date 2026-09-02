@@ -323,20 +323,12 @@ static void run_export_case(struct vfio_test_device *dev,
 		.fd = dev->device_fd,
 		.offset = dev->memory_offset,
 	};
-	struct writer_thread_ctx writer = {
-		.fd = dev->device_fd,
-		.offset = dev->config_offset,
-		.command = dev->command,
-	};
 	struct mmap_thread_ctx map = {
 		.fd = dev->device_fd,
 		.offset = dev->bar0_offset,
 	};
-	struct timespec settle = { .tv_nsec = 100 * 1000 * 1000 };
 	pthread_t io_tid;
-	pthread_t writer_tid;
 	pthread_t mmap_tid;
-	bool writer_completed;
 	bool mmap_completed;
 	int uffd;
 
@@ -355,7 +347,6 @@ static void run_export_case(struct vfio_test_device *dev,
 	if (ioctl(uffd, UFFDIO_REGISTER, &reg))
 		fail("UFFDIO_REGISTER");
 
-	atomic_init(&writer.done, false);
 	atomic_init(&map.done, false);
 	if (pthread_create(&io_tid, NULL, io_thread, &io))
 		fail_msg("pthread_create I/O thread");
@@ -369,30 +360,21 @@ static void run_export_case(struct vfio_test_device *dev,
 	if (event.event != UFFD_EVENT_PAGEFAULT)
 		fail_msg("unexpected userfaultfd event");
 
-	if (pthread_create(&writer_tid, NULL, writer_thread, &writer))
-		fail_msg("pthread_create config writer");
-	nanosleep(&settle, NULL);
-	writer_completed = atomic_load_explicit(&writer.done,
-						memory_order_acquire);
 	if (pthread_create(&mmap_tid, NULL, mmap_thread, &map))
 		fail_msg("pthread_create mmap thread");
 	mmap_completed = wait_for_done(&map.done);
 
-	printf("export: writer %s, mmap %s while user fault is unresolved\n",
-	       writer_completed ? "completed" : "blocked",
+	printf("export-v5-shape: mmap %s while user fault is unresolved\n",
 	       mmap_completed ? "completed" : "blocked");
+	if (mmap_completed == expect_mmap_blocked)
+		fail_msg(expect_mmap_blocked ?
+			 "mmap unexpectedly completed with v5 export locking" :
+			 "mmap blocked with v6 export locking");
 
 	resolve_fault(uffd, io.buffer);
 	pthread_join(io_tid, NULL);
-	pthread_join(writer_tid, NULL);
 	pthread_join(mmap_tid, NULL);
 
-	if (writer_completed)
-		fail_msg("config writer did not queue behind legacy nvgrace read");
-	if (writer.result != sizeof(writer.command)) {
-		errno = writer.error;
-		fail("PCI command write");
-	}
 	if (io.result != getpagesize()) {
 		errno = io.error;
 		fail("nvgrace read");
@@ -401,11 +383,6 @@ static void run_export_case(struct vfio_test_device *dev,
 		errno = map.error;
 		fail("VFIO BAR mmap");
 	}
-	if (mmap_completed == expect_mmap_blocked)
-		fail_msg(expect_mmap_blocked ?
-			 "mmap unexpectedly completed with legacy export locking" :
-			 "mmap blocked with shadow-state export locking");
-
 	reg.range.start = (uintptr_t)io.buffer;
 	reg.range.len = getpagesize();
 	if (ioctl(uffd, UFFDIO_UNREGISTER, &reg.range))

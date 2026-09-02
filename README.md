@@ -14,8 +14,10 @@ cd vfio-dmabuf-lab
 ```
 
 `./run` builds Linux, QEMU, static guest programs, and an initramfs, then runs
-all three KVM tests. Build products and serial logs are written under `out/`.
-The first build is large; subsequent builds are incremental.
+all three KVM tests. It builds two exact Linux revisions: Matt's v5 as the
+deadlock control and the proposed v6 stack as the fixed kernel. Build products
+and serial logs are written under `out/`. The first build is large; subsequent
+builds are incremental.
 
 The host needs a C compiler and static libc development files, GNU make,
 binutils, flex, bison, bc, OpenSSL and ELF development files, Python, Meson,
@@ -26,46 +28,53 @@ Useful narrower commands:
 
 ```sh
 ./run build
-./run test nvgrace
+./run test nvgrace-v6
 ./run test dmabuf
-./run test legacy-export
+./run test nvgrace-v5
 make clean
 ```
 
 ## Repository shape
 
-- `linux/` tracks `opsound/linux:vfio-dmabuf-mmap-v6-qemu-lab`. It contains
-  the v6 series on top of upstream Linux v7.2, the locking changes,
-  bounce-buffer nvgrace experiment, and explicit QEMU-only test hooks. The
-  `opsound/linux` fork's parent is `torvalds/linux`.
+- `linux/` tracks the clean v6 series on top of upstream Linux v7.2. It has the
+  nvgrace bounce-buffer fix and VFIO DMA-BUF series, but no test hooks or
+  runtime locking controls. The `opsound/linux` fork's parent is
+  `torvalds/linux`.
+- `out/src/linux-v5/` is an automatically created worktree at Matt's exact v5
+  tip. It shares the `linux/` Git object store rather than duplicating the
+  repository. Exact revisions are recorded in `configs/versions.env`.
 - `qemu/` tracks `opsound/qemu:vfio-dmabuf-mmap-v6-qemu-lab`. It currently
-  has no runtime source changes; its lab commit pins the GitHub mirror of
-  QEMU's `keycodemapdb` build dependency so builds work on this network.
+  extends EDU with an opt-in nvgrace test personality and pins the GitHub
+  mirror of QEMU's `keycodemapdb` build dependency.
 - `tests/` contains the static PID 1 guest orchestrator and the deterministic
   userfaultfd concurrency harness.
 - `configs/` contains the exact lockdep-enabled x86 kernel configuration.
 - `scripts/` owns host builds and QEMU launch/result checking.
 
-To edit either source tree, commit and push in that nested repository, then
-commit the updated submodule pointer in this repository. This is deliberately
-the same workflow for Linux and QEMU.
+To edit the v6 Linux or QEMU source, commit and push in that nested repository,
+then commit the updated submodule pointer and revision manifest here. This is
+deliberately the same workflow for Linux and QEMU. The v5 worktree is a pinned
+control and is never patched during a build.
 
 ## Tests
 
-`nvgrace` binds QEMU EDU to the nvgrace VFIO driver in test mode. It first
-proves that faulting user access under `memory_lock(R)` blocks a queued config
-writer. It then verifies that the bounce-buffer read and write paths let the
-writer finish while the userfault remains unresolved. Finally, it constructs
-the reader/writer/mmap sequence and verifies that mmap-triggered DMA-BUF export
-does not wait for `memory_lock`. Fixed cases run ten times each.
+`nvgrace-v6` boots the clean v6 kernel and binds the QEMU EDU device to the
+unmodified nvgrace VFIO driver. QEMU supplies the firmware memory properties,
+reserved guest RAM, and device-ready registers that real Grace hardware would
+supply. The test uses userfaultfd to stop a read or write on a faulting user
+page, then verifies config-space writers and mmap-triggered DMA-BUF export can
+make progress. Each fixed case runs ten times.
 
 `dmabuf` binds `bochs-display` to vfio-pci and runs the v6 mmap, alias,
 revocation, and cleanup test ten times.
 
-`legacy-export` re-enables the old export-side `memory_lock(R)` acquisition.
-Success means lockdep reports the circular dependency and mmap remains blocked
-until the 15-second host timeout.
+`nvgrace-v5` boots Matt's exact v5 kernel with the same QEMU device. A VFIO
+pread holds `memory_lock(R)` while userfaultfd suspends its user access; a
+concurrent mmap holds `mmap_lock(W)` and v5 DMA-BUF export waits for
+`memory_lock(W)`. Resolving the user fault then needs `mmap_lock`, closing the
+cycle. Success means lockdep reports the circular dependency and the guest
+remains deadlocked until the 15-second host timeout.
 
-The setup exercises the real VFIO, rwsem, mmap, DMA-BUF, userfaultfd, and IOMMU
-paths. It substitutes allocated RAM for Grace GPU memory and therefore does not
-validate Grace hardware, CXL readiness, cache attributes, or performance.
+The setup exercises the real kernel VFIO, rwsem, mmap, DMA-BUF, userfaultfd,
+and IOMMU paths. QEMU owns only the hardware/firmware emulation. It does not
+validate Grace hardware, CXL behavior, cache attributes, or performance.
