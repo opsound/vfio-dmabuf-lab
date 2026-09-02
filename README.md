@@ -40,10 +40,12 @@ make clean
 
 ## Repository shape
 
-- `linux/` tracks the clean v6 series on top of upstream Linux v7.2. It has the
-  VFIO DMA-BUF shadow-state fix, leaves nvgrace's user-access behavior
-  unchanged, and has no test hooks or runtime locking controls. The
-  `opsound/linux` fork's parent is `torvalds/linux`.
+- `linux/` tracks Matt Evans's v6 series on top of upstream Linux v7.2. It has
+  the VFIO DMA-BUF shadow-state fix, leaves nvgrace's user-access behavior
+  unchanged, and has no test hooks or runtime locking controls. The pinned tip
+  adds only a lab build fix for stale MEMATTR coverage in the standalone
+  selftest; the kernel code is Matt's exact tip. The `opsound/linux` fork's
+  parent is `torvalds/linux`.
 - `out/src/linux-v5/` is an automatically created worktree at Matt's exact v5
   tip. It shares the `linux/` Git object store rather than duplicating the
   repository. Exact revisions are recorded in `configs/versions.env`.
