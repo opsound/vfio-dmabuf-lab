@@ -7,21 +7,84 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 qemu="${root}/out/qemu/qemu-system-x86_64"
 initramfs="${root}/out/initramfs.cpio.gz"
 logs="${root}/out/logs"
-selection="${1:-all}"
+have_flock=0
 
-for path in "${qemu}" "${initramfs}"; do
-	if [ ! -e "${path}" ]; then
-		echo "missing build artifact: ${path}; run ./run build first" >&2
-		exit 1
-	fi
+usage()
+{
+	echo "usage: $0 [--jobs N] [--dry-run] [all|<kernel>|<test>|<kernel>:<test>]" >&2
+	echo "  kernels: v5 v6 david-base david-fix" >&2
+	echo "  tests: nvgrace-v6 dmabuf reset-lockdep nvgrace-v5" >&2
+	exit 2
+}
+
+jobs=1
+dry_run=0
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--jobs=*)
+		jobs="${1#--jobs=}"
+		shift
+		;;
+	--jobs|-j)
+		if [ $# -lt 2 ]; then
+			usage
+		fi
+		jobs="$2"
+		shift 2
+		;;
+	-j?*)
+		jobs="${1#-j}"
+		shift
+		;;
+	--dry-run)
+		dry_run=1
+		shift
+		;;
+	--help|-h)
+		usage
+		;;
+	-*)
+		usage
+		;;
+	*)
+		break
+		;;
+	esac
 done
-
-if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
-	echo "/dev/kvm is not accessible" >&2
-	exit 1
+if [ $# -gt 1 ]; then
+	usage
+fi
+selection="${1:-all}"
+case "${jobs}" in
+''|*[!0-9]*)
+	usage
+	;;
+esac
+jobs=$((10#${jobs}))
+if [ "${jobs}" -lt 1 ]; then
+	usage
 fi
 
-mkdir -p "${logs}"
+# --dry-run only enumerates the matrix; it needs no build artifacts or KVM.
+if [ "${dry_run}" -eq 0 ]; then
+	for path in "${qemu}" "${initramfs}"; do
+		if [ ! -e "${path}" ]; then
+			echo "missing build artifact: ${path}; run ./run build first" >&2
+			exit 1
+		fi
+	done
+
+	if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+		echo "/dev/kvm is not accessible" >&2
+		exit 1
+	fi
+
+	mkdir -p "${logs}"
+	if command -v flock >/dev/null 2>&1; then
+		have_flock=1
+		exec 9>>"${logs}/.progress.lock"
+	fi
+fi
 
 # Formal test matrix: "kernel test expectation" triples.  Only listed
 # combinations run; any other kernel:test pair is rejected.
@@ -85,6 +148,37 @@ kernel_image()
 	esac
 }
 
+# Serialized console output. Parallel workers share stdout/stderr; every
+# console line goes through say()/say_err() so lines never interleave.
+# Serial runs take the same path with an uncontended lock (identical bytes).
+say()
+{
+	if [ "${have_flock}" -eq 1 ]; then
+		flock -x 9
+	fi
+	echo "$1"
+	if [ "${have_flock}" -eq 1 ]; then
+		flock -u 9
+	fi
+}
+say_err()
+{
+	if [ "${have_flock}" -eq 1 ]; then
+		flock -x 9
+	fi
+	echo "$1" >&2
+	if [ "${have_flock}" -eq 1 ]; then
+		flock -u 9
+	fi
+}
+say_lines() # stdin -> stderr, one locked line at a time
+{
+	local line
+	while IFS= read -r line || [ -n "${line}" ]; do
+		say_err "${line}"
+	done
+}
+
 check_clean()
 {
 	local label="$1"
@@ -93,18 +187,18 @@ check_clean()
 	local result="$4"
 
 	if [ "${qemu_status}" -ne 0 ] || ! grep -q "${result}" "${log}"; then
-		echo "FAIL: ${label}; QEMU status ${qemu_status}" >&2
-		tail -n 80 "${log}" >&2
+		say_err "FAIL: ${label}; QEMU status ${qemu_status}"
+		tail -n 80 "${log}" | say_lines
 		return 1
 	fi
 
 	if grep -Eq 'WARNING:|BUG:|KASAN:|UBSAN:|possible circular locking|hung task|soft lockup|hard LOCKUP' "${log}"; then
-		echo "FAIL: ${label}; kernel warning or fault signature found" >&2
-		tail -n 80 "${log}" >&2
+		say_err "FAIL: ${label}; kernel warning or fault signature found"
+		tail -n 80 "${log}" | say_lines
 		return 1
 	fi
 
-	echo "PASS: ${label}; log: ${log}"
+	say "PASS: ${label}; log: ${log}"
 }
 
 check_lockdep_warning()
@@ -117,25 +211,25 @@ check_lockdep_warning()
 	local frame
 
 	if [ -z "${frames}" ]; then
-		echo "FAIL: ${label}; no lockdep frames configured" >&2
+		say_err "FAIL: ${label}; no lockdep frames configured"
 		return 1
 	fi
 	if [ "${qemu_status}" -ne 0 ] ||
 	   ! grep -q "${result}" "${log}" ||
 	   ! grep -q 'possible circular locking dependency detected' "${log}"; then
-		echo "FAIL: ${label}; expected lockdep warning was not reproduced" >&2
-		tail -n 100 "${log}" >&2
+		say_err "FAIL: ${label}; expected lockdep warning was not reproduced"
+		tail -n 100 "${log}" | say_lines
 		return 1
 	fi
 	while IFS= read -r frame; do
 		if [ -n "${frame}" ] && ! grep -qE "${frame}" "${log}"; then
-			echo "FAIL: ${label}; expected lockdep frame '${frame}' not found" >&2
-			tail -n 100 "${log}" >&2
+			say_err "FAIL: ${label}; expected lockdep frame '${frame}' not found"
+			tail -n 100 "${log}" | say_lines
 			return 1
 		fi
 	done <<< "${frames}"
 
-	echo "PASS: ${label}; expected lockdep warning reproduced; log: ${log}"
+	say "PASS: ${label}; expected lockdep warning reproduced; log: ${log}"
 }
 
 check_deadlock_timeout()
@@ -149,11 +243,11 @@ check_deadlock_timeout()
 	   grep -q 'possible circular locking dependency detected' "${log}" &&
 	   grep -q '\*\*\* DEADLOCK \*\*\*' "${log}" &&
 	   grep -q "${marker}" "${log}"; then
-		echo "PASS: ${label}; expected deadlock reproduced; log: ${log}"
+		say "PASS: ${label}; expected deadlock reproduced; log: ${log}"
 		return 0
 	fi
-	echo "FAIL: ${label}; expected deadlock was not reproduced" >&2
-	tail -n 80 "${log}" >&2
+	say_err "FAIL: ${label}; expected deadlock was not reproduced"
+	tail -n 80 "${log}" | say_lines
 	return 1
 }
 
@@ -171,11 +265,11 @@ run_entry()
 	local deadlock_marker=""
 
 	if ! expectation="$(matrix_expectation "${kernel}" "${test}")"; then
-		echo "no matrix entry for ${kernel}:${test}" >&2
+		say_err "no matrix entry for ${kernel}:${test}"
 		return 2
 	fi
 	if ! image="$(kernel_image "${kernel}")"; then
-		echo "unknown kernel: ${kernel}" >&2
+		say_err "unknown kernel: ${kernel}"
 		return 2
 	fi
 
@@ -213,18 +307,18 @@ vfio_pci_ioctl_reset|vfio_pci_core_ioctl"
 		deadlock_marker="export: writer blocked, mmap blocked while user fault is unresolved"
 		;;
 	*)
-		echo "unknown test: ${test}" >&2
+		say_err "unknown test: ${test}"
 		return 2
 		;;
 	esac
 	if [ ! -e "${image}" ]; then
-		echo "missing build artifact: ${image}; run ./run build first" >&2
+		say_err "missing build artifact: ${image}; run ./run build first"
 		return 1
 	fi
 
 	log="${logs}/${kernel}-${test}.log"
 	: > "${log}"
-	echo "==> Running ${kernel}:${test} (expect ${expectation})"
+	say "==> Running ${kernel}:${test} (expect ${expectation})"
 	set +e
 	timeout "${timeout_seconds}" "${qemu}" \
 		-machine q35,kernel-irqchip=split \
@@ -250,25 +344,19 @@ vfio_pci_ioctl_reset|vfio_pci_core_ioctl"
 		check_deadlock_timeout "${kernel}:${test}" "${log}" "${qemu_status}" "${deadlock_marker}"
 		;;
 	*)
-		echo "unknown expectation: ${expectation}" >&2
+		say_err "unknown expectation: ${expectation}"
 		return 2
 		;;
 	esac
 }
 
-usage()
-{
-	echo "usage: $0 [all|<kernel>|<test>|<kernel>:<test>]" >&2
-	echo "  kernels: v5 v6 david-base david-fix" >&2
-	echo "  tests: nvgrace-v6 dmabuf reset-lockdep nvgrace-v5" >&2
-	exit 2
-}
-
+# Collect the matrix entries for the selection. Order matches MATRIX.
+entries=()
 case "${selection}" in
 all)
 	for entry in "${MATRIX[@]}"; do
 		read -r kernel test expectation <<< "${entry}"
-		run_entry "${kernel}" "${test}" || exit 1
+		entries+=("${kernel} ${test}")
 	done
 	;;
 *:*)
@@ -277,26 +365,136 @@ all)
 	if [ -z "${kernel}" ] || [ -z "${test}" ]; then
 		usage
 	fi
-	run_entry "${kernel}" "${test}"
+	if ! matrix_expectation "${kernel}" "${test}" >/dev/null; then
+		say_err "no matrix entry for ${kernel}:${test}"
+		exit 2
+	fi
+	entries+=("${kernel} ${test}")
 	;;
 *)
 	if kernel_image "${selection}" >/dev/null; then
-		ran=0
 		for entry in "${MATRIX[@]}"; do
 			read -r kernel test expectation <<< "${entry}"
 			if [ "${kernel}" = "${selection}" ]; then
-				run_entry "${kernel}" "${test}" || exit 1
-				ran=1
+				entries+=("${kernel} ${test}")
 			fi
 		done
-		if [ "${ran}" -eq 0 ]; then
-			echo "no matrix entries for kernel: ${selection}" >&2
+		if [ "${#entries[@]}" -eq 0 ]; then
+			say_err "no matrix entries for kernel: ${selection}"
 			exit 2
 		fi
 	elif kernel="$(default_kernel "${selection}")"; then
-		run_entry "${kernel}" "${selection}"
+		entries+=("${kernel} ${selection}")
 	else
 		usage
 	fi
 	;;
 esac
+
+if [ "${dry_run}" -eq 1 ]; then
+	for entry in "${entries[@]}"; do
+		read -r kernel test <<< "${entry}"
+		echo "${kernel}:${test}"
+	done
+	exit 0
+fi
+
+if [ "${jobs}" -eq 1 ]; then
+	if [ "${#entries[@]}" -eq 1 ]; then
+		read -r kernel test <<< "${entries[0]}"
+		run_entry "${kernel}" "${test}"
+		exit $?
+	fi
+	for entry in "${entries[@]}"; do
+		read -r kernel test <<< "${entry}"
+		run_entry "${kernel}" "${test}" || exit 1
+	done
+	exit 0
+fi
+
+# Parallel runs: up to ${jobs} QEMU guests at once, fail-fast (no new
+# launches after the first failure; in-flight guests run to completion).
+if (( BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 403 )); then
+	echo "run-tests.sh: --jobs needs bash 4.3 or newer (for wait -n)" >&2
+	exit 2
+fi
+if [ "${have_flock}" -eq 0 ]; then
+	echo "run-tests.sh: --jobs needs flock(1)" >&2
+	exit 2
+fi
+rm -f "${logs}"/.status-*
+
+run_and_record() # kernel test
+{
+	local kernel="$1"
+	local test="$2"
+	local rc
+
+	if run_entry "${kernel}" "${test}"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	echo "${rc}" > "${logs}/.status-${kernel}-${test}"
+	return "${rc}"
+}
+
+active=0
+failed=0
+for entry in "${entries[@]}"; do
+	if [ "${failed}" -ne 0 ]; then
+		break
+	fi
+	read -r kernel test <<< "${entry}"
+	echo pending > "${logs}/.status-${kernel}-${test}"
+	run_and_record "${kernel}" "${test}" &
+	active=$((active + 1))
+	if [ "${active}" -ge "${jobs}" ]; then
+		if ! wait -n; then
+			failed=1
+		fi
+		active=$((active - 1))
+	fi
+done
+while [ "${active}" -gt 0 ]; do
+	if ! wait -n; then
+		failed=1
+	fi
+	active=$((active - 1))
+done
+
+passed=0
+failed_count=0
+interrupted=0
+skipped=0
+for entry in "${entries[@]}"; do
+	read -r kernel test <<< "${entry}"
+	status_file="${logs}/.status-${kernel}-${test}"
+	if [ ! -e "${status_file}" ]; then
+		skipped=$((skipped + 1))
+	elif [ "$(cat "${status_file}")" = "pending" ]; then
+		interrupted=$((interrupted + 1))
+	elif [ "$(cat "${status_file}")" -eq 0 ]; then
+		passed=$((passed + 1))
+	else
+		failed_count=$((failed_count + 1))
+	fi
+done
+say "==> Summary: ${passed} passed, ${failed_count} failed, ${interrupted} interrupted, ${skipped} skipped"
+for entry in "${entries[@]}"; do
+	read -r kernel test <<< "${entry}"
+	status_file="${logs}/.status-${kernel}-${test}"
+	if [ ! -e "${status_file}" ]; then
+		say "==>   skipped: ${kernel}:${test}"
+	elif [ "$(cat "${status_file}")" = "pending" ]; then
+		say "==>   interrupted: ${kernel}:${test}"
+	elif [ "$(cat "${status_file}")" -eq 0 ]; then
+		say "==>   ok: ${kernel}:${test}"
+	else
+		say "==>   FAILED: ${kernel}:${test}"
+	fi
+done
+if [ "${failed}" -ne 0 ] || [ "${failed_count}" -ne 0 ] || [ "${interrupted}" -ne 0 ]; then
+	exit 1
+fi
+exit 0

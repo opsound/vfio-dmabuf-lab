@@ -15,10 +15,11 @@ build)
 	"${root}/scripts/build.sh"
 	;;
 test)
-	"${root}/scripts/run-tests.sh" "${2:-all}"
+	shift
+	"${root}/scripts/run-tests.sh" "$@"
 	;;
 *)
-	echo "usage: $0 [all|build|test [all|<kernel>|<test>|<kernel>:<test>]]" >&2
+	echo "usage: $0 [all|build|test [--jobs N] [--dry-run] [all|<kernel>|<test>|<kernel>:<test>]]" >&2
 	exit 2
 	;;
 esac
