@@ -17,7 +17,8 @@ cd vfio-dmabuf-lab
 all four KVM tests. It builds two exact Linux revisions: Matt's v5 as the
 deadlock control and the proposed core-only v6 locking fix. The v6 kernel keeps
 nvgrace's direct user access under `memory_lock`; it does not add a bounce
-buffer. Build products and serial logs are written under `out/`. The first
+buffer. Build products and serial logs are written under `out/`. Each PASS
+summary names its serial log under `out/logs/`. The first
 build is large; subsequent builds are incremental.
 
 The host needs a C compiler and static libc development files, GNU make,
@@ -53,8 +54,8 @@ make clean
 - `qemu/` tracks `opsound/qemu:vfio-dmabuf-mmap-v6-qemu-lab`. It currently
   extends EDU with an opt-in nvgrace test personality and pins the GitHub
   mirror of QEMU's `keycodemapdb` build dependency.
-- `tests/` contains the static PID 1 guest orchestrator and the deterministic
-  userfaultfd concurrency harness.
+- `tests/` contains the static PID 1 guest orchestrator (`guest-init.c`),
+  the nvgrace user-access test, and the VFIO BAR fault/reset reproducer.
 - `configs/` contains the exact lockdep-enabled x86 kernel configuration.
 - `scripts/` owns host builds and QEMU launch/result checking.
 
@@ -81,12 +82,14 @@ revocation, and cleanup test ten times.
 vfio-pci, faults its mmapable BARs, and issues `VFIO_DEVICE_RESET`. It is the
 reproducer from Vipin Sharma's
 [VFIO reset lockdep report](https://lore.kernel.org/20260821193502.92431-1-vipinsh@google.com/),
-adapted to the lab's legacy VFIO-container harness. A perf read into an
-unfaulted page makes the report's perf-to-`mmap_lock` dependency deterministic
-in the minimal guest, which uses a translated IOMMU domain for this case so
-the IOVA CPU-hotplug dependency is also exercised. Success currently means the
-known `memory_lock` to IOMMU-group circular dependency is reported by lockdep
-and the reset completes.
+adapted to the lab's legacy VFIO-container harness. A CPU-bound perf read
+and a two-step `getdents64()` into unfaulted pages, plus a CPU offline/online
+cycle and the perf hard-lockup detector, make the report's
+`cpu_hotplug_lock` to `mmap_lock` history deterministic in the minimal guest,
+which uses a translated IOMMU domain for this case so the IOVA CPU-hotplug
+dependency is also exercised. The guest fails fast when the device lacks ATS.
+Success means lockdep reports the known `memory_lock` to IOMMU-group circular
+dependency and the reset completes.
 
 `nvgrace-v5` boots Matt's exact v5 kernel with the same QEMU device. A VFIO
 pread holds `memory_lock(R)` while userfaultfd suspends its user access, a
