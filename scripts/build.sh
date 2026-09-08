@@ -109,6 +109,10 @@ echo "==> Building static guest test programs"
 	-o "${test_build}/vfio_dmabuf_mmap_test" \
 	"${linux_src}/tools/testing/selftests/vfio/standalone/vfio_dmabuf_mmap_test.c"
 "${cc}" -O2 -g -Wall -Wextra -Werror -static \
+	-I"${headers}/include" \
+	-o "${test_build}/vfio_pci_mmap_reset_test" \
+	"${root}/tests/vfio_pci_mmap_reset_test.c"
+"${cc}" -O2 -g -Wall -Wextra -Werror -static \
 	-o "${test_build}/guest-init" "${root}/tests/guest-init.c"
 
 echo "==> Building initramfs"
@@ -120,6 +124,8 @@ install -m 0755 "${test_build}/nvgrace_uaccess_test" \
 	"${rootfs}/nvgrace_uaccess_test"
 install -m 0755 "${test_build}/vfio_dmabuf_mmap_test" \
 	"${rootfs}/vfio_dmabuf_mmap_test"
+install -m 0755 "${test_build}/vfio_pci_mmap_reset_test" \
+	"${rootfs}/vfio_pci_mmap_reset_test"
 (
 	cd "${rootfs}"
 	find . -print0 | LC_ALL=C sort -z | cpio --null -o --format=newc

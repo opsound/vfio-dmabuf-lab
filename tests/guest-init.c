@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/stat.h>
@@ -73,6 +74,18 @@ static int bind_driver(const char *driver)
 	if (access(path, F_OK)) {
 		fprintf(stderr, "PCI device %s not found\n", BDF);
 		return -1;
+	}
+	snprintf(path, sizeof(path),
+		 "/sys/bus/pci/devices/%s/driver", BDF);
+	if (!access(path, F_OK)) {
+		if (link_basename(path, actual, sizeof(actual)))
+			return -1;
+		if (!strcmp(actual, driver))
+			return 0;
+		snprintf(path, sizeof(path),
+			 "/sys/bus/pci/devices/%s/driver/unbind", BDF);
+		if (write_text(path, BDF))
+			return -1;
 	}
 	snprintf(path, sizeof(path),
 		 "/sys/bus/pci/devices/%s/driver_override", BDF);
@@ -191,6 +204,23 @@ static int run_dmabuf(void)
 	return 0;
 }
 
+static int run_reset_lockdep(void)
+{
+	const char *cpu_online = "/sys/devices/system/cpu/cpu3/online";
+	char group[32];
+	char *argv[] = {
+		"/vfio_pci_mmap_reset_test", BDF, group, NULL,
+	};
+
+	/* Exercise CPU-hotplug callbacks used by the reported lock chain. */
+	if (write_text(cpu_online, "0") || write_text(cpu_online, "1"))
+		return 1;
+	if (bind_driver("vfio-pci") || iommu_group(group, sizeof(group)))
+		return 1;
+	printf("VFIO_RESET_LOCKDEP_BDF=%s group=%s\n", BDF, group);
+	return run_program(argv);
+}
+
 static int run_nvgrace_v5(void)
 {
 	char group[32];
@@ -209,6 +239,12 @@ static void finish(const char *marker, int status)
 {
 	printf("%s=%s\n", marker, status ? "FAIL" : "PASS");
 	fflush(NULL);
+	/*
+	 * Drain the serial console before the sysrq poweroff below: without
+	 * this, the kernel's "sysrq: Power Off" message can land mid-line
+	 * inside the result marker the host greps for.
+	 */
+	tcdrain(STDOUT_FILENO);
 	sync();
 	if (write_text("/proc/sysrq-trigger", "o"))
 		reboot(RB_POWER_OFF);
@@ -247,6 +283,9 @@ int main(int argc, char **argv)
 	} else if (!strcmp(mode, "dmabuf")) {
 		status = run_dmabuf();
 		finish("VFIO_DMABUF_RESULT", status);
+	} else if (!strcmp(mode, "reset-lockdep")) {
+		status = run_reset_lockdep();
+		finish("VFIO_RESET_LOCKDEP_RESULT", status);
 	} else {
 		fprintf(stderr, "unknown vfio_test mode: %s\n", mode);
 		finish("VFIO_LAB_RESULT", 1);

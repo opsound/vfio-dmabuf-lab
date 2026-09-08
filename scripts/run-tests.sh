@@ -28,6 +28,8 @@ run_mode()
 	local mode="$1"
 	local device timeout_seconds result log qemu_status kernel memory
 	local extra_append=""
+	local iommu="intel-iommu,intremap=on,caching-mode=on"
+	local iommu_cmdline="iommu=pt"
 
 	case "${mode}" in
 	nvgrace-v6)
@@ -44,6 +46,16 @@ run_mode()
 		memory=2048M
 		timeout_seconds=180
 		result="VFIO_DMABUF_RESULT=PASS"
+		;;
+	reset-lockdep)
+		kernel="${root}/out/linux-v6/arch/x86/boot/bzImage"
+		device="virtio-net-pci,ats=on,iommu_platform=on,disable-legacy=on,bus=rp1,addr=0x0"
+		memory=2048M
+		iommu="intel-iommu,intremap=on,caching-mode=on,device-iotlb=on"
+		iommu_cmdline=""
+		extra_append="nmi_watchdog=1"
+		timeout_seconds=180
+		result="VFIO_RESET_LOCKDEP_RESULT=PASS"
 		;;
 	nvgrace-v5)
 		kernel="${root}/out/linux-v5/arch/x86/boot/bzImage"
@@ -73,8 +85,8 @@ run_mode()
 		-nodefaults -no-user-config -no-reboot \
 		-display none -monitor none -serial "file:${log}" \
 		-kernel "${kernel}" -initrd "${initramfs}" \
-		-append "console=ttyS0 earlyprintk=serial panic=-1 oops=panic intel_iommu=on iommu=pt vfio_iommu_type1.allow_unsafe_interrupts=1 ${extra_append} -- ${mode}" \
-		-device intel-iommu,intremap=on,caching-mode=on \
+		-append "console=ttyS0 earlyprintk=serial panic=-1 oops=panic intel_iommu=on ${iommu_cmdline} vfio_iommu_type1.allow_unsafe_interrupts=1 ${extra_append} -- ${mode}" \
+		-device "${iommu}" \
 		-device pcie-root-port,id=rp1,chassis=1,slot=1 \
 		-device "${device}" </dev/null >> "${log}" 2>&1
 	qemu_status="$?"
@@ -85,11 +97,25 @@ run_mode()
 		   grep -q 'possible circular locking dependency detected' "${log}" &&
 		   grep -q '\*\*\* DEADLOCK \*\*\*' "${log}" &&
 		   grep -q 'export: writer blocked, mmap blocked while user fault is unresolved' "${log}"; then
-			echo "PASS: ${mode}; expected deadlock reproduced"
+			echo "PASS: ${mode}; expected deadlock reproduced; log: ${log}"
 			return 0
 		fi
 		echo "FAIL: ${mode}; expected deadlock was not reproduced" >&2
 		tail -n 80 "${log}" >&2
+		return 1
+	fi
+
+	if [ "${mode}" = reset-lockdep ]; then
+		if [ "${qemu_status}" -eq 0 ] &&
+		   grep -q "${result}" "${log}" &&
+		   grep -q 'possible circular locking dependency detected' "${log}" &&
+		   grep -q 'pci_dev_reset_iommu_prepare' "${log}" &&
+		   grep -qE 'vfio_pci_ioctl_reset|vfio_pci_core_ioctl' "${log}"; then
+			echo "PASS: ${mode}; expected reset lockdep warning reproduced; log: ${log}"
+			return 0
+		fi
+		echo "FAIL: ${mode}; expected reset lockdep warning was not reproduced" >&2
+		tail -n 100 "${log}" >&2
 		return 1
 	fi
 
@@ -112,13 +138,14 @@ case "${selection}" in
 all)
 	run_mode nvgrace-v6
 	run_mode dmabuf
+	run_mode reset-lockdep
 	run_mode nvgrace-v5
 	;;
-nvgrace-v6|dmabuf|nvgrace-v5)
+nvgrace-v6|dmabuf|reset-lockdep|nvgrace-v5)
 	run_mode "${selection}"
 	;;
 *)
-	echo "usage: $0 [all|nvgrace-v6|dmabuf|nvgrace-v5]" >&2
+	echo "usage: $0 [all|nvgrace-v6|dmabuf|reset-lockdep|nvgrace-v5]" >&2
 	exit 2
 	;;
 esac

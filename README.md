@@ -14,7 +14,7 @@ cd vfio-dmabuf-lab
 ```
 
 `./run` builds Linux, QEMU, static guest programs, and an initramfs, then runs
-all three KVM tests. It builds two exact Linux revisions: Matt's v5 as the
+all four KVM tests. It builds two exact Linux revisions: Matt's v5 as the
 deadlock control and the proposed core-only v6 locking fix. The v6 kernel keeps
 nvgrace's direct user access under `memory_lock`; it does not add a bounce
 buffer. Build products and serial logs are written under `out/`. The first
@@ -34,6 +34,7 @@ Useful narrower commands:
 ./run build
 ./run test nvgrace-v6
 ./run test dmabuf
+./run test reset-lockdep
 ./run test nvgrace-v5
 make clean
 ```
@@ -75,6 +76,17 @@ three-thread case runs ten times.
 
 `dmabuf` binds `bochs-display` to vfio-pci and runs the v6 mmap, alias,
 revocation, and cleanup test ten times.
+
+`reset-lockdep` binds an ATS- and FLR-capable `virtio-net-pci` device to
+vfio-pci, faults its mmapable BARs, and issues `VFIO_DEVICE_RESET`. It is the
+reproducer from Vipin Sharma's
+[VFIO reset lockdep report](https://lore.kernel.org/20260821193502.92431-1-vipinsh@google.com/),
+adapted to the lab's legacy VFIO-container harness. A perf read into an
+unfaulted page makes the report's perf-to-`mmap_lock` dependency deterministic
+in the minimal guest, which uses a translated IOMMU domain for this case so
+the IOVA CPU-hotplug dependency is also exercised. Success currently means the
+known `memory_lock` to IOMMU-group circular dependency is reported by lockdep
+and the reset completes.
 
 `nvgrace-v5` boots Matt's exact v5 kernel with the same QEMU device. A VFIO
 pread holds `memory_lock(R)` while userfaultfd suspends its user access, a
