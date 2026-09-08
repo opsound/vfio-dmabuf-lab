@@ -135,9 +135,10 @@ combinations run:
 | david-base | reset-lockdep | lockdep warning, reset done |
 | david-fix  | reset-lockdep | clean PASS                  |
 
-`david-fix` currently fails `clean`: the patch removes the circular
-dependency but trips stale `lockdep_assert_held(&group->mutex)`
-assertions in the reset path, so the bar stays red pending a respin.
+`david-fix` passes `clean`: the pin includes a follow-up ("iommu: exclude
+group membership mutation against reset paths") that completes the fix
+for the stale `lockdep_assert_held(&group->mutex)` assertions in the
+reset path, so the bar is green.
 
 The setup exercises the real kernel VFIO, rwsem, mmap, DMA-BUF, userfaultfd,
 and IOMMU paths. QEMU owns only the hardware/firmware emulation. It does not
