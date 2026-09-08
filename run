@@ -8,11 +8,10 @@ action="${1:-all}"
 
 case "${action}" in
 all)
-	"${root}/scripts/build.sh"
-	"${root}/scripts/run-tests.sh" all
+	make -C "${root}" -j"${JOBS:-$(nproc)}" all TEST_JOBS="${TEST_JOBS:-1}"
 	;;
 build)
-	"${root}/scripts/build.sh"
+	make -C "${root}" -j"${JOBS:-$(nproc)}" build
 	;;
 test)
 	shift
