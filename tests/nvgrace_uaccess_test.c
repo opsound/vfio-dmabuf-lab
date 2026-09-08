@@ -19,6 +19,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "vfio_test_common.h"
+
 #define PCI_COMMAND 0x04
 #define TEST_REGION VFIO_PCI_BAR4_REGION_INDEX
 #define WRITER_WAIT_MS 1500
@@ -60,18 +62,6 @@ struct mmap_thread_ctx {
 	int error;
 };
 
-static void fail(const char *message)
-{
-	fprintf(stderr, "FAIL: %s: %s\n", message, strerror(errno));
-	exit(EXIT_FAILURE);
-}
-
-static void fail_msg(const char *message)
-{
-	fprintf(stderr, "FAIL: %s\n", message);
-	exit(EXIT_FAILURE);
-}
-
 static struct vfio_region_info get_region(int fd, uint32_t index)
 {
 	struct vfio_region_info region = {
@@ -86,7 +76,6 @@ static struct vfio_region_info get_region(int fd, uint32_t index)
 
 static struct vfio_test_device open_vfio(const char *bdf, const char *group)
 {
-	struct vfio_group_status status = { .argsz = sizeof(status) };
 	struct vfio_test_device dev = {
 		.container_fd = -1,
 		.group_fd = -1,
@@ -95,32 +84,9 @@ static struct vfio_test_device open_vfio(const char *bdf, const char *group)
 	struct vfio_region_info memory;
 	struct vfio_region_info config;
 	struct vfio_region_info bar0;
-	char path[128];
 
-	dev.container_fd = open("/dev/vfio/vfio", O_RDWR);
-	if (dev.container_fd < 0)
-		fail("open VFIO container");
-	if (ioctl(dev.container_fd, VFIO_GET_API_VERSION) != VFIO_API_VERSION)
-		fail_msg("unexpected VFIO API version");
-	if (ioctl(dev.container_fd, VFIO_CHECK_EXTENSION, VFIO_TYPE1_IOMMU) != 1)
-		fail_msg("VFIO type1 IOMMU unavailable");
-
-	snprintf(path, sizeof(path), "/dev/vfio/%s", group);
-	dev.group_fd = open(path, O_RDWR);
-	if (dev.group_fd < 0)
-		fail("open VFIO group");
-	if (ioctl(dev.group_fd, VFIO_GROUP_GET_STATUS, &status))
-		fail("VFIO_GROUP_GET_STATUS");
-	if (!(status.flags & VFIO_GROUP_FLAGS_VIABLE))
-		fail_msg("VFIO group is not viable");
-	if (ioctl(dev.group_fd, VFIO_GROUP_SET_CONTAINER, &dev.container_fd))
-		fail("VFIO_GROUP_SET_CONTAINER");
-	if (ioctl(dev.container_fd, VFIO_SET_IOMMU, VFIO_TYPE1_IOMMU))
-		fail("VFIO_SET_IOMMU");
-
-	dev.device_fd = ioctl(dev.group_fd, VFIO_GROUP_GET_DEVICE_FD, bdf);
-	if (dev.device_fd < 0)
-		fail("VFIO_GROUP_GET_DEVICE_FD");
+	dev.device_fd = open_vfio_device(bdf, group, &dev.container_fd,
+					 &dev.group_fd);
 
 	memory = get_region(dev.device_fd, TEST_REGION);
 	config = get_region(dev.device_fd, VFIO_PCI_CONFIG_REGION_INDEX);
@@ -224,15 +190,70 @@ static void resolve_fault(int uffd, void *page)
 	munmap(source, getpagesize());
 }
 
-static void run_fault_case(struct vfio_test_device *dev, bool write,
-			   bool expect_writer_blocked)
+static void *map_test_page(void)
+{
+	void *page;
+
+	page = mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (page == MAP_FAILED)
+		fail("mmap test page");
+	return page;
+}
+
+static int setup_userfault(void *buffer)
 {
 	struct uffdio_register reg = {
 		.mode = UFFDIO_REGISTER_MODE_MISSING,
 	};
 	struct uffdio_api api = { .api = UFFD_API };
+	int uffd;
+
+	/* The fault originates in kernel uaccess, so USER_MODE_ONLY is invalid. */
+	uffd = syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK);
+	if (uffd < 0)
+		fail("userfaultfd");
+	if (ioctl(uffd, UFFDIO_API, &api))
+		fail("UFFDIO_API");
+	reg.range.start = (uintptr_t)buffer;
+	reg.range.len = getpagesize();
+	if (ioctl(uffd, UFFDIO_REGISTER, &reg))
+		fail("UFFDIO_REGISTER");
+	return uffd;
+}
+
+static void wait_for_pagefault(int uffd)
+{
 	struct uffd_msg event;
-	struct pollfd pollfd;
+	struct pollfd pollfd = {
+		.fd = uffd,
+		.events = POLLIN,
+	};
+
+	if (poll(&pollfd, 1, 5000) != 1)
+		fail_msg("timed out waiting for userfaultfd event");
+	if (read(uffd, &event, sizeof(event)) != sizeof(event))
+		fail("read userfaultfd event");
+	if (event.event != UFFD_EVENT_PAGEFAULT)
+		fail_msg("unexpected userfaultfd event");
+}
+
+static void teardown_userfault(int uffd, void *buffer)
+{
+	struct uffdio_range range = {
+		.start = (uintptr_t)buffer,
+		.len = getpagesize(),
+	};
+
+	if (ioctl(uffd, UFFDIO_UNREGISTER, &range))
+		fail("UFFDIO_UNREGISTER");
+	close(uffd);
+	munmap(buffer, getpagesize());
+}
+
+static void run_fault_case(struct vfio_test_device *dev, bool write,
+			   bool expect_writer_blocked)
+{
 	struct io_thread_ctx io = {
 		.fd = dev->device_fd,
 		.offset = dev->memory_offset,
@@ -248,34 +269,14 @@ static void run_fault_case(struct vfio_test_device *dev, bool write,
 	bool writer_completed;
 	int uffd;
 
-	io.buffer = mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
-			 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (io.buffer == MAP_FAILED)
-		fail("mmap test page");
-
-	/* The fault originates in kernel uaccess, so USER_MODE_ONLY is invalid. */
-	uffd = syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK);
-	if (uffd < 0)
-		fail("userfaultfd");
-	if (ioctl(uffd, UFFDIO_API, &api))
-		fail("UFFDIO_API");
-	reg.range.start = (uintptr_t)io.buffer;
-	reg.range.len = getpagesize();
-	if (ioctl(uffd, UFFDIO_REGISTER, &reg))
-		fail("UFFDIO_REGISTER");
+	io.buffer = map_test_page();
+	uffd = setup_userfault(io.buffer);
 
 	atomic_init(&writer.done, false);
 	if (pthread_create(&io_tid, NULL, io_thread, &io))
 		fail_msg("pthread_create I/O thread");
 
-	pollfd.fd = uffd;
-	pollfd.events = POLLIN;
-	if (poll(&pollfd, 1, 5000) != 1)
-		fail_msg("timed out waiting for userfaultfd event");
-	if (read(uffd, &event, sizeof(event)) != sizeof(event))
-		fail("read userfaultfd event");
-	if (event.event != UFFD_EVENT_PAGEFAULT)
-		fail_msg("unexpected userfaultfd event");
+	wait_for_pagefault(uffd);
 
 	if (pthread_create(&writer_tid, NULL, writer_thread, &writer))
 		fail_msg("pthread_create config writer");
@@ -302,23 +303,12 @@ static void run_fault_case(struct vfio_test_device *dev, bool write,
 			 "writer unexpectedly completed in legacy mode" :
 			 "writer remained blocked in fixed mode");
 
-	reg.range.start = (uintptr_t)io.buffer;
-	reg.range.len = getpagesize();
-	if (ioctl(uffd, UFFDIO_UNREGISTER, &reg.range))
-		fail("UFFDIO_UNREGISTER");
-	close(uffd);
-	munmap(io.buffer, getpagesize());
+	teardown_userfault(uffd, io.buffer);
 }
 
 static void run_export_case(struct vfio_test_device *dev,
 			    bool expect_mmap_blocked)
 {
-	struct uffdio_register reg = {
-		.mode = UFFDIO_REGISTER_MODE_MISSING,
-	};
-	struct uffdio_api api = { .api = UFFD_API };
-	struct uffd_msg event;
-	struct pollfd pollfd;
 	struct io_thread_ctx io = {
 		.fd = dev->device_fd,
 		.offset = dev->memory_offset,
@@ -340,34 +330,15 @@ static void run_export_case(struct vfio_test_device *dev,
 	bool mmap_completed;
 	int uffd;
 
-	io.buffer = mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE,
-			 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (io.buffer == MAP_FAILED)
-		fail("mmap test page");
-
-	uffd = syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK);
-	if (uffd < 0)
-		fail("userfaultfd");
-	if (ioctl(uffd, UFFDIO_API, &api))
-		fail("UFFDIO_API");
-	reg.range.start = (uintptr_t)io.buffer;
-	reg.range.len = getpagesize();
-	if (ioctl(uffd, UFFDIO_REGISTER, &reg))
-		fail("UFFDIO_REGISTER");
+	io.buffer = map_test_page();
+	uffd = setup_userfault(io.buffer);
 
 	atomic_init(&writer.done, false);
 	atomic_init(&map.done, false);
 	if (pthread_create(&io_tid, NULL, io_thread, &io))
 		fail_msg("pthread_create I/O thread");
 
-	pollfd.fd = uffd;
-	pollfd.events = POLLIN;
-	if (poll(&pollfd, 1, 5000) != 1)
-		fail_msg("timed out waiting for userfaultfd event");
-	if (read(uffd, &event, sizeof(event)) != sizeof(event))
-		fail("read userfaultfd event");
-	if (event.event != UFFD_EVENT_PAGEFAULT)
-		fail_msg("unexpected userfaultfd event");
+	wait_for_pagefault(uffd);
 
 	/*
 	 * Queue a memory_lock writer behind the faulting nvgrace read before
@@ -410,12 +381,7 @@ static void run_export_case(struct vfio_test_device *dev,
 		errno = map.error;
 		fail("VFIO BAR mmap");
 	}
-	reg.range.start = (uintptr_t)io.buffer;
-	reg.range.len = getpagesize();
-	if (ioctl(uffd, UFFDIO_UNREGISTER, &reg.range))
-		fail("UFFDIO_UNREGISTER");
-	close(uffd);
-	munmap(io.buffer, getpagesize());
+	teardown_userfault(uffd, io.buffer);
 }
 
 int main(int argc, char **argv)
