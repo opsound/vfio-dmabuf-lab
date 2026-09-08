@@ -41,8 +41,23 @@ Useful narrower commands:
 ./run test nvgrace-v5
 ./run test david-fix:reset-lockdep   # one kernel:test matrix entry
 ./run test david-fix                 # every matrix entry for one kernel
+./run test --jobs 4 all              # up to 4 guests at once, fail-fast
+./run test --dry-run all             # list the matrix without running it
 make clean
 ```
+
+Builds parallelize by default: `./run build` runs `make -j$(nproc)`, which
+fetches sources serially, then builds the four kernels and QEMU
+concurrently (the kernels share one jobserver pool; QEMU's Ninja build
+takes a fixed `QEMU_JOBS` slice, default 8), then headers, guest tests,
+and the initramfs. `JOBS` sets the global budget (`JOBS=16 ./run
+build`); bare `make build` and bare `scripts/build.sh` keep the legacy
+serial flow. `make test` runs `scripts/selftest.sh` (fast QEMU-free
+harness checks) before the matrix.
+
+Test runs stay serial by default and parallelize on request: `./run test
+--jobs 4 all` (or `make test TEST_JOBS=4`) runs up to four guests at once
+with fail-fast and a closing per-entry summary.
 
 ## Repository shape
 
