@@ -47,13 +47,28 @@ ensure_kernel_source()
 	local source="$2"
 	local commit="$3"
 	local ref="$4"
+	local fetch_rounds
 
 	if ! git -C "${linux_src}" cat-file -e "${commit}^{commit}" 2>/dev/null; then
 		echo "==> Fetching the exact Linux ${label} revision"
 		git -C "${linux_src}" fetch --no-tags --depth=1 origin "${ref}"
 	fi
 	if ! git -C "${linux_src}" cat-file -e "${commit}^{commit}" 2>/dev/null; then
-		echo "Linux ${label} commit ${commit} is unavailable after fetching ${ref}" >&2
+		# The pinned commit may sit below the branch tip (e.g. a
+		# follow-up was pushed after the pin); deepen in bounded
+		# steps until it is available.  (Raw-SHA fetch is not
+		# supported by the hosting protocol, so deepen instead.)
+		fetch_rounds=0
+		while ! git -C "${linux_src}" cat-file -e "${commit}^{commit}" 2>/dev/null; do
+			fetch_rounds=$((fetch_rounds + 1))
+			if [ "${fetch_rounds}" -gt 10 ]; then
+				break
+			fi
+			git -C "${linux_src}" fetch --no-tags --deepen=10 origin "${ref}"
+		done
+	fi
+	if ! git -C "${linux_src}" cat-file -e "${commit}^{commit}" 2>/dev/null; then
+		echo "Linux ${label} commit ${commit} is unavailable from origin" >&2
 		exit 1
 	fi
 
