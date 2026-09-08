@@ -24,8 +24,7 @@ cc="${CC:-cc}"
 # shellcheck source=../configs/versions.env
 . "${root}/configs/versions.env"
 
-if ! git -C "${linux_src}" rev-parse --git-dir >/dev/null 2>&1 ||
-   ! git -C "${qemu_src}" rev-parse --git-dir >/dev/null 2>&1; then
+if [ ! -e "${linux_src}/.git" ] || [ ! -e "${qemu_src}/.git" ]; then
 	git -C "${root}" submodule update --init linux qemu
 fi
 if [ ! -f "${qemu_src}/subprojects/keycodemapdb/README" ]; then
