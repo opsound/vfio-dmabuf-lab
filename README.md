@@ -14,8 +14,10 @@ cd vfio-dmabuf-lab
 ```
 
 `./run` builds Linux, QEMU, static guest programs, and an initramfs, then runs
-all four KVM tests. It builds two exact Linux revisions: Matt's v5 as the
-deadlock control and the proposed core-only v6 locking fix. The v6 kernel keeps
+the full kernel x test matrix. It builds four exact Linux revisions: Matt's v5
+as the deadlock control, the proposed core-only v6 locking fix, David
+Matlack's reported base as the reset-lockdep positive control, and the base
+plus his `reset_mutex` fix. The v6 kernel keeps
 nvgrace's direct user access under `memory_lock`; it does not add a bounce
 buffer. Build products and serial logs are written under `out/`. Each PASS
 summary names its serial log under `out/logs/`. The first
@@ -33,10 +35,12 @@ Useful narrower commands:
 
 ```sh
 ./run build
-./run test nvgrace-v6
+./run test nvgrace-v6            # bare test: default kernel (v6 here)
 ./run test dmabuf
 ./run test reset-lockdep
 ./run test nvgrace-v5
+./run test david-fix:reset-lockdep   # one kernel:test matrix entry
+./run test david-fix                 # every matrix entry for one kernel
 make clean
 ```
 
@@ -51,6 +55,10 @@ make clean
 - `out/src/linux-v5/` is an automatically created worktree at Matt's exact v5
   tip. It shares the `linux/` Git object store rather than duplicating the
   repository. Exact revisions are recorded in `configs/versions.env`.
+- `out/src/linux-david-base/` and `out/src/linux-david-fix/` are worktrees
+  for the reset-lockdep fix validation: David Matlack's reported upstream
+  base and the base plus his `reset_mutex` patch. The branches are local
+  until pushed to origin.
 - `qemu/` tracks `opsound/qemu:vfio-dmabuf-mmap-v6-qemu-lab`. It currently
   extends EDU with an opt-in nvgrace test personality and pins the GitHub
   mirror of QEMU's `keycodemapdb` build dependency.
@@ -98,6 +106,23 @@ config-space writer queues for `memory_lock(W)`, and a concurrent mmap holds
 user fault then needs `mmap_lock`, closing the cycle. Success means lockdep
 reports the circular dependency and the guest remains deadlocked until the
 15-second host timeout.
+
+The runner executes a kernel x test x expectation matrix; only the listed
+combinations run:
+
+| kernel     | test          | expected outcome            |
+|------------|---------------|-----------------------------|
+| v6         | nvgrace-v6    | clean PASS                  |
+| v6         | dmabuf        | clean PASS                  |
+| v6         | reset-lockdep | lockdep warning, reset done |
+| v5         | nvgrace-v5    | deadlock, host timeout      |
+| v5         | reset-lockdep | lockdep warning, reset done |
+| david-base | reset-lockdep | lockdep warning, reset done |
+| david-fix  | reset-lockdep | clean PASS                  |
+
+`david-fix` currently fails `clean`: the patch removes the circular
+dependency but trips stale `lockdep_assert_held(&group->mutex)`
+assertions in the reset path, so the bar stays red pending a respin.
 
 The setup exercises the real kernel VFIO, rwsem, mmap, DMA-BUF, userfaultfd,
 and IOMMU paths. QEMU owns only the hardware/firmware emulation. It does not
