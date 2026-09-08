@@ -10,6 +10,10 @@ out="${root}/out"
 linux_v5_src="${out}/src/linux-v5"
 linux_v5_build="${out}/linux-v5"
 linux_v6_build="${out}/linux-v6"
+linux_david_base_src="${out}/src/linux-david-base"
+linux_david_base_build="${out}/linux-david-base"
+linux_david_fix_src="${out}/src/linux-david-fix"
+linux_david_fix_build="${out}/linux-david-fix"
 qemu_build="${out}/qemu"
 test_build="${out}/tests"
 headers="${out}/headers"
@@ -38,34 +42,47 @@ if [ "$(git -C "${qemu_src}" rev-parse HEAD)" != "${QEMU_COMMIT}" ]; then
 	exit 1
 fi
 
-if ! git -C "${linux_src}" cat-file -e "${LINUX_V5_COMMIT}^{commit}" 2>/dev/null; then
-	echo "==> Fetching the exact Linux v5 control revision"
-	git -C "${linux_src}" fetch --no-tags --depth=1 origin "${LINUX_V5_REF}"
-fi
-if ! git -C "${linux_src}" cat-file -e "${LINUX_V5_COMMIT}^{commit}" 2>/dev/null; then
-	echo "LINUX_V5_COMMIT is unavailable after fetching ${LINUX_V5_REF}" >&2
-	exit 1
-fi
+ensure_kernel_source()
+{
+	local label="$1"
+	local source="$2"
+	local commit="$3"
+	local ref="$4"
 
-mkdir -p "${out}/src"
-if [ -e "${linux_v5_src}/.git" ]; then
-	if [ -n "$(git -C "${linux_v5_src}" status --porcelain)" ]; then
-		echo "generated v5 worktree is dirty: ${linux_v5_src}" >&2
+	if ! git -C "${linux_src}" cat-file -e "${commit}^{commit}" 2>/dev/null; then
+		echo "==> Fetching the exact Linux ${label} revision"
+		git -C "${linux_src}" fetch --no-tags --depth=1 origin "${ref}"
+	fi
+	if ! git -C "${linux_src}" cat-file -e "${commit}^{commit}" 2>/dev/null; then
+		echo "Linux ${label} commit ${commit} is unavailable after fetching ${ref}" >&2
 		exit 1
 	fi
-	if [ "$(git -C "${linux_v5_src}" rev-parse HEAD)" != "${LINUX_V5_COMMIT}" ]; then
-		git -C "${linux_v5_src}" switch --detach "${LINUX_V5_COMMIT}"
-	fi
-else
-	# Recover after a previous out/ directory was removed without unregistering
-	# its generated worktree.
-	git -C "${linux_src}" worktree prune
-	git -C "${linux_src}" worktree add --detach "${linux_v5_src}" \
-		"${LINUX_V5_COMMIT}"
-fi
 
-mkdir -p "${linux_v5_build}" "${linux_v6_build}" "${qemu_build}" \
-	"${test_build}" "${headers}"
+	if [ -e "${source}/.git" ]; then
+		if [ -n "$(git -C "${source}" status --porcelain)" ]; then
+			echo "generated ${label} worktree is dirty: ${source}" >&2
+			exit 1
+		fi
+		if [ "$(git -C "${source}" rev-parse HEAD)" != "${commit}" ]; then
+			git -C "${source}" switch --detach "${commit}"
+		fi
+	else
+		# Recover after a previous out/ directory was removed without unregistering
+		# its generated worktree.
+		git -C "${linux_src}" worktree prune
+		git -C "${linux_src}" worktree add --detach "${source}" \
+			"${commit}"
+	fi
+}
+
+mkdir -p "${out}/src"
+ensure_kernel_source v5 "${linux_v5_src}" "${LINUX_V5_COMMIT}" "${LINUX_V5_REF}"
+ensure_kernel_source david-base "${linux_david_base_src}" "${DAVID_BASE_COMMIT}" "${DAVID_BASE_REF}"
+ensure_kernel_source david-fix "${linux_david_fix_src}" "${DAVID_FIX_COMMIT}" "${DAVID_FIX_REF}"
+
+mkdir -p "${linux_v5_build}" "${linux_v6_build}" \
+	"${linux_david_base_build}" "${linux_david_fix_build}" \
+	"${qemu_build}" "${test_build}" "${headers}"
 
 build_linux()
 {
@@ -81,6 +98,8 @@ build_linux()
 
 build_linux v5 "${linux_v5_src}" "${linux_v5_build}"
 build_linux v6 "${linux_src}" "${linux_v6_build}"
+build_linux david-base "${linux_david_base_src}" "${linux_david_base_build}"
+build_linux david-fix "${linux_david_fix_src}" "${linux_david_fix_build}"
 make -C "${linux_src}" O="${linux_v6_build}" \
 	INSTALL_HDR_PATH="${headers}" headers_install
 
