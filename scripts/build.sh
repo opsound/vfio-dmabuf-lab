@@ -10,10 +10,6 @@ out="${root}/out"
 linux_v5_src="${out}/src/linux-v5"
 linux_v5_build="${out}/linux-v5"
 linux_v7_build="${out}/linux-v7"
-linux_david_base_src="${out}/src/linux-david-base"
-linux_david_base_build="${out}/linux-david-base"
-linux_david_fix_src="${out}/src/linux-david-fix"
-linux_david_fix_build="${out}/linux-david-fix"
 qemu_build="${out}/qemu"
 test_build="${out}/tests"
 headers="${out}/headers"
@@ -48,8 +44,6 @@ fetch_all()
 
 	mkdir -p "${out}/src"
 	ensure_kernel_source v5 "${linux_v5_src}" "${LINUX_V5_COMMIT}" "${LINUX_V5_REF}"
-	ensure_kernel_source david-base "${linux_david_base_src}" "${DAVID_BASE_COMMIT}" "${DAVID_BASE_REF}"
-	ensure_kernel_source david-fix "${linux_david_fix_src}" "${DAVID_FIX_COMMIT}" "${DAVID_FIX_REF}"
 }
 
 ensure_kernel_source()
@@ -114,14 +108,6 @@ build_one_kernel() # name
 		source="${linux_src}"
 		build="${linux_v7_build}"
 		;;
-	david-base)
-		source="${linux_david_base_src}"
-		build="${linux_david_base_build}"
-		;;
-	david-fix)
-		source="${linux_david_fix_src}"
-		build="${linux_david_fix_build}"
-		;;
 	*)
 		echo "unknown kernel: ${name}" >&2
 		exit 2
@@ -184,10 +170,6 @@ build_tests()
 		-o "${test_build}/vfio_dmabuf_mmap_test" \
 		"${linux_src}/tools/testing/selftests/vfio/standalone/vfio_dmabuf_mmap_test.c"
 	"${cc}" -O2 -g -Wall -Wextra -Werror -static \
-		-I"${headers}/include" \
-		-o "${test_build}/vfio_pci_mmap_reset_test" \
-		"${root}/tests/vfio_pci_mmap_reset_test.c"
-	"${cc}" -O2 -g -Wall -Wextra -Werror -static \
 		-o "${test_build}/guest-init" "${root}/tests/guest-init.c"
 }
 
@@ -202,8 +184,6 @@ build_initramfs()
 		"${rootfs}/nvgrace_uaccess_test"
 	install -m 0755 "${test_build}/vfio_dmabuf_mmap_test" \
 		"${rootfs}/vfio_dmabuf_mmap_test"
-	install -m 0755 "${test_build}/vfio_pci_mmap_reset_test" \
-		"${rootfs}/vfio_pci_mmap_reset_test"
 	(
 		cd "${rootfs}"
 		find . -print0 | LC_ALL=C sort -z | cpio --null -o --format=newc
@@ -243,8 +223,6 @@ all)
 	fetch_all
 	build_one_kernel v5
 	build_one_kernel v7
-	build_one_kernel david-base
-	build_one_kernel david-fix
 	build_headers
 	build_qemu
 	build_tests

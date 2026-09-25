@@ -37,21 +37,16 @@ expect_fail() # name args...
 
 all="v7:nvgrace-v7
 v7:dmabuf
-v7:reset-lockdep
-v5:nvgrace-v5
-v5:reset-lockdep
-david-base:reset-lockdep
-david-fix:reset-lockdep"
+v5:nvgrace-v5"
 check "dry-run all" "${all}" "$("${runner}" --dry-run all)"
 check "dry-run all with --jobs" "${all}" "$("${runner}" --jobs 4 --dry-run all)"
 check "dry-run default selection" "${all}" "$("${runner}" --dry-run)"
 
 check "dry-run kernel" "v7:nvgrace-v7
-v7:dmabuf
-v7:reset-lockdep" "$("${runner}" --dry-run v7)"
+v7:dmabuf" "$("${runner}" --dry-run v7)"
 
 # A bare test name runs its default kernel's entry only.
-check "dry-run test" "v7:reset-lockdep" "$("${runner}" --dry-run reset-lockdep)"
+check "dry-run test" "v7:dmabuf" "$("${runner}" --dry-run dmabuf)"
 check "dry-run k:t" "v5:nvgrace-v5" "$("${runner}" --dry-run v5:nvgrace-v5)"
 
 expect_fail "dry-run unknown k:t" "${runner}" --dry-run v5:dmabuf

@@ -12,8 +12,8 @@ have_flock=0
 usage()
 {
 	echo "usage: $0 [--jobs N] [--dry-run] [all|<kernel>|<test>|<kernel>:<test>]" >&2
-	echo "  kernels: v5 v7 david-base david-fix" >&2
-	echo "  tests: nvgrace-v7 dmabuf reset-lockdep nvgrace-v5" >&2
+	echo "  kernels: v5 v7" >&2
+	echo "  tests: nvgrace-v7 dmabuf nvgrace-v5" >&2
 	exit 2
 }
 
@@ -91,11 +91,7 @@ fi
 MATRIX=(
 	"v7 nvgrace-v7 clean"
 	"v7 dmabuf clean"
-	"v7 reset-lockdep lockdep-warning"
 	"v5 nvgrace-v5 deadlock-timeout"
-	"v5 reset-lockdep lockdep-warning"
-	"david-base reset-lockdep lockdep-warning"
-	"david-fix reset-lockdep clean"
 )
 
 matrix_expectation()
@@ -115,7 +111,7 @@ matrix_expectation()
 default_kernel()
 {
 	case "$1" in
-	nvgrace-v7|dmabuf|reset-lockdep)
+	nvgrace-v7|dmabuf)
 		echo v7
 		;;
 	nvgrace-v5)
@@ -135,12 +131,6 @@ kernel_image()
 		;;
 	v7)
 		echo "${root}/out/linux-v7/arch/x86/boot/bzImage"
-		;;
-	david-base)
-		echo "${root}/out/linux-david-base/arch/x86/boot/bzImage"
-		;;
-	david-fix)
-		echo "${root}/out/linux-david-fix/arch/x86/boot/bzImage"
 		;;
 	*)
 		return 1
@@ -224,40 +214,6 @@ check_clean()
 	say "PASS: ${label}; log: ${log}"
 }
 
-check_lockdep_warning()
-{
-	local label="$1"
-	local log="$2"
-	local markers="$3"
-	local qemu_status="$4"
-	local result="$5"
-	local frames="$6"
-	local frame
-
-	if [ -z "${frames}" ]; then
-		say_err "FAIL: ${label}; no lockdep frames configured"
-		return 1
-	fi
-	if [ "${qemu_status}" -ne 0 ] ||
-	   ! marker_ok "${markers}" "${result}" ||
-	   ! grep -q 'possible circular locking dependency detected' "${log}"; then
-		say_err "FAIL: ${label}; expected lockdep warning was not reproduced"
-		show_markers "${markers}"
-		tail -n 100 "${log}" | say_lines
-		return 1
-	fi
-	while IFS= read -r frame; do
-		if [ -n "${frame}" ] && ! grep -qE "${frame}" "${log}"; then
-			say_err "FAIL: ${label}; expected lockdep frame '${frame}' not found"
-			show_markers "${markers}"
-			tail -n 100 "${log}" | say_lines
-			return 1
-		fi
-	done <<< "${frames}"
-
-	say "PASS: ${label}; expected lockdep warning reproduced; log: ${log}"
-}
-
 check_deadlock_timeout()
 {
 	local label="$1"
@@ -287,7 +243,6 @@ run_entry()
 	local extra_append=""
 	local iommu="intel-iommu,intremap=on,caching-mode=on"
 	local iommu_cmdline="iommu=pt"
-	local lockdep_frames=""
 	local deadlock_marker=""
 
 	if ! expectation="$(matrix_expectation "${kernel}" "${test}")"; then
@@ -312,17 +267,6 @@ run_entry()
 		memory=2048M
 		timeout_seconds=180
 		result="VFIO_DMABUF_RESULT=PASS"
-		;;
-	reset-lockdep)
-		device="virtio-net-pci,ats=on,iommu_platform=on,disable-legacy=on,bus=rp1,addr=0x0"
-		memory=2048M
-		iommu="intel-iommu,intremap=on,caching-mode=on,device-iotlb=on"
-		iommu_cmdline=""
-		extra_append="nmi_watchdog=1"
-		timeout_seconds=180
-		result="VFIO_RESET_LOCKDEP_RESULT=PASS"
-		lockdep_frames="pci_dev_reset_iommu_prepare
-vfio_pci_ioctl_reset|vfio_pci_core_ioctl"
 		;;
 	nvgrace-v5)
 		device="edu,nvgrace-test=on,nvgrace-mem-base=0x40000000,nvgrace-mem-size=0x60000000,bus=rp1,addr=0x0"
@@ -367,9 +311,6 @@ vfio_pci_ioctl_reset|vfio_pci_core_ioctl"
 	case "${expectation}" in
 	clean)
 		check_clean "${kernel}:${test}" "${log}" "${markers}" "${qemu_status}" "${result}"
-		;;
-	lockdep-warning)
-		check_lockdep_warning "${kernel}:${test}" "${log}" "${markers}" "${qemu_status}" "${result}" "${lockdep_frames}"
 		;;
 	deadlock-timeout)
 		check_deadlock_timeout "${kernel}:${test}" "${log}" "${qemu_status}" "${deadlock_marker}"

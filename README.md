@@ -14,10 +14,8 @@ cd vfio-dmabuf-lab
 ```
 
 `./run` builds Linux, QEMU, static guest programs, and an initramfs, then runs
-the full kernel x test matrix. It builds four exact Linux revisions: Matt's v5
-as the deadlock control, Matt's v7 series, David
-Matlack's reported base as the reset-lockdep positive control, and the base
-plus his `reset_mutex` fix. The v7 kernel keeps
+the full kernel x test matrix. It builds two exact Linux revisions: Matt's v7
+series and Matt's v5 as the deadlock control. The v7 kernel keeps
 nvgrace's direct user access under `memory_lock`; it does not add a bounce
 buffer. Build products and serial logs are written under `out/`. Each PASS
 summary names its serial log under `out/logs/`. The first
@@ -37,17 +35,16 @@ Useful narrower commands:
 ./run build
 ./run test nvgrace-v7            # bare test: default kernel (v7 here)
 ./run test dmabuf
-./run test reset-lockdep
 ./run test nvgrace-v5
-./run test david-fix:reset-lockdep   # one kernel:test matrix entry
-./run test david-fix                 # every matrix entry for one kernel
+./run test v7:dmabuf              # one kernel:test matrix entry
+./run test v7                     # every matrix entry for one kernel
 ./run test --jobs 4 all              # up to 4 guests at once, fail-fast
 ./run test --dry-run all             # list the matrix without running it
 make clean
 ```
 
 Builds parallelize by default: `./run build` runs `make -j$(nproc)`, which
-fetches sources serially, then builds the four kernels and QEMU
+fetches sources serially, then builds the two kernels and QEMU
 concurrently (the kernels share one jobserver pool; QEMU's Ninja build
 takes a fixed `QEMU_JOBS` slice, default 8), then headers, guest tests,
 and the initramfs. `JOBS` sets the global budget (`JOBS=16 ./run
@@ -70,10 +67,6 @@ with fail-fast and a closing per-entry summary.
 - `out/src/linux-v5/` is an automatically created worktree at Matt's exact v5
   tip. It shares the `linux/` Git object store rather than duplicating the
   repository. Exact revisions are recorded in `configs/versions.env`.
-- `out/src/linux-david-base/` and `out/src/linux-david-fix/` are worktrees
-  for the reset-lockdep fix validation: David Matlack's reported upstream
-  base and the base plus his `reset_mutex` patch. The branches are local
-  until pushed to origin.
 - `qemu/` tracks `opsound/qemu:vfio-dmabuf-mmap-v6-qemu-lab`. It currently
   extends EDU with an opt-in nvgrace test personality and pins the GitHub
   mirror of QEMU's `keycodemapdb` build dependency.
@@ -101,19 +94,6 @@ three-thread case runs ten times.
 `dmabuf` binds `bochs-display` to vfio-pci and runs the v7 mmap, alias,
 revocation, and cleanup test ten times.
 
-`reset-lockdep` binds an ATS- and FLR-capable `virtio-net-pci` device to
-vfio-pci, faults its mmapable BARs, and issues `VFIO_DEVICE_RESET`. It is the
-reproducer from Vipin Sharma's
-[VFIO reset lockdep report](https://lore.kernel.org/20260821193502.92431-1-vipinsh@google.com/),
-adapted to the lab's legacy VFIO-container harness. A CPU-bound perf read
-and a two-step `getdents64()` into unfaulted pages, plus a CPU offline/online
-cycle and the perf hard-lockup detector, make the report's
-`cpu_hotplug_lock` to `mmap_lock` history deterministic in the minimal guest,
-which uses a translated IOMMU domain for this case so the IOVA CPU-hotplug
-dependency is also exercised. The guest fails fast when the device lacks ATS.
-Success means lockdep reports the known `memory_lock` to IOMMU-group circular
-dependency and the reset completes.
-
 `nvgrace-v5` boots Matt's exact v5 kernel with the same QEMU device. A VFIO
 pread holds `memory_lock(R)` while userfaultfd suspends its user access, a
 config-space writer queues for `memory_lock(W)`, and a concurrent mmap holds
@@ -129,16 +109,7 @@ combinations run:
 |------------|---------------|-----------------------------|
 | v7         | nvgrace-v7    | clean PASS                  |
 | v7         | dmabuf        | clean PASS                  |
-| v7         | reset-lockdep | lockdep warning, reset done |
 | v5         | nvgrace-v5    | deadlock, host timeout      |
-| v5         | reset-lockdep | lockdep warning, reset done |
-| david-base | reset-lockdep | lockdep warning, reset done |
-| david-fix  | reset-lockdep | clean PASS                  |
-
-`david-fix` passes `clean`: the pin includes a follow-up ("iommu: exclude
-group membership mutation against reset paths") that completes the fix
-for the stale `lockdep_assert_held(&group->mutex)` assertions in the
-reset path, so the bar is green.
 
 Verdicts read result markers from a dedicated channel, not the shared serial
 console: QEMU attaches a second serial port, guest PID 1 writes exactly one
