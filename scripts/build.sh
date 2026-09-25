@@ -29,7 +29,8 @@ cc="${CC:-cc}"
 fetch_all()
 {
 	if [ ! -e "${linux_src}/.git" ] || [ ! -e "${qemu_src}/.git" ]; then
-		git -C "${root}" submodule update --init linux qemu
+		git -C "${root}" submodule update --init --depth 1 \
+			--single-branch linux qemu
 	fi
 	if [ ! -f "${qemu_src}/subprojects/keycodemapdb/README" ]; then
 		git -C "${qemu_src}" submodule update --init --depth=1 \
