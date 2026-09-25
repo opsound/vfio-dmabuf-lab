@@ -162,7 +162,7 @@ static int prepare_nvgrace(char *group, size_t group_size)
 	return 0;
 }
 
-static int run_nvgrace_v6(void)
+static int run_nvgrace_v7(void)
 {
 	char group[32];
 	int iteration;
@@ -274,9 +274,9 @@ int main(int argc, char **argv)
 	mode = argv[1];
 	printf("VFIO_TEST_MODE=%s\n", mode);
 
-	if (!strcmp(mode, "nvgrace-v6")) {
-		status = run_nvgrace_v6();
-		finish("NVGRACE_V6_RESULT", status);
+	if (!strcmp(mode, "nvgrace-v7")) {
+		status = run_nvgrace_v7();
+		finish("NVGRACE_V7_RESULT", status);
 	} else if (!strcmp(mode, "nvgrace-v5")) {
 		status = run_nvgrace_v5();
 		finish("NVGRACE_V5_RESULT", status);

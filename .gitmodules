@@ -1,7 +1,7 @@
 [submodule "linux"]
 	path = linux
 	url = https://github.com/opsound/linux.git
-	branch = vfio-dmabuf-mmap-v6-locking-fix
+	branch = vfio-dmabuf-mmap-v7-upstream
 	shallow = true
 [submodule "qemu"]
 	path = qemu

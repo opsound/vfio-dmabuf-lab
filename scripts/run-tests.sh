@@ -12,8 +12,8 @@ have_flock=0
 usage()
 {
 	echo "usage: $0 [--jobs N] [--dry-run] [all|<kernel>|<test>|<kernel>:<test>]" >&2
-	echo "  kernels: v5 v6 david-base david-fix" >&2
-	echo "  tests: nvgrace-v6 dmabuf reset-lockdep nvgrace-v5" >&2
+	echo "  kernels: v5 v7 david-base david-fix" >&2
+	echo "  tests: nvgrace-v7 dmabuf reset-lockdep nvgrace-v5" >&2
 	exit 2
 }
 
@@ -89,9 +89,9 @@ fi
 # Formal test matrix: "kernel test expectation" triples.  Only listed
 # combinations run; any other kernel:test pair is rejected.
 MATRIX=(
-	"v6 nvgrace-v6 clean"
-	"v6 dmabuf clean"
-	"v6 reset-lockdep lockdep-warning"
+	"v7 nvgrace-v7 clean"
+	"v7 dmabuf clean"
+	"v7 reset-lockdep lockdep-warning"
 	"v5 nvgrace-v5 deadlock-timeout"
 	"v5 reset-lockdep lockdep-warning"
 	"david-base reset-lockdep lockdep-warning"
@@ -115,8 +115,8 @@ matrix_expectation()
 default_kernel()
 {
 	case "$1" in
-	nvgrace-v6|dmabuf|reset-lockdep)
-		echo v6
+	nvgrace-v7|dmabuf|reset-lockdep)
+		echo v7
 		;;
 	nvgrace-v5)
 		echo v5
@@ -133,8 +133,8 @@ kernel_image()
 	v5)
 		echo "${root}/out/linux-v5/arch/x86/boot/bzImage"
 		;;
-	v6)
-		echo "${root}/out/linux-v6/arch/x86/boot/bzImage"
+	v7)
+		echo "${root}/out/linux-v7/arch/x86/boot/bzImage"
 		;;
 	david-base)
 		echo "${root}/out/linux-david-base/arch/x86/boot/bzImage"
@@ -274,12 +274,12 @@ run_entry()
 	fi
 
 	case "${test}" in
-	nvgrace-v6)
+	nvgrace-v7)
 		device="edu,nvgrace-test=on,nvgrace-mem-base=0x40000000,nvgrace-mem-size=0x60000000,bus=rp1,addr=0x0"
 		memory=4096M
 		extra_append='memmap=1536M$1G'
 		timeout_seconds=180
-		result="NVGRACE_V6_RESULT=PASS"
+		result="NVGRACE_V7_RESULT=PASS"
 		;;
 	dmabuf)
 		device="bochs-display,bus=rp1,addr=0x0,vgamem=64M"

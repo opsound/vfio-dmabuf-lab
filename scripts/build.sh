@@ -9,7 +9,7 @@ qemu_src="${root}/qemu"
 out="${root}/out"
 linux_v5_src="${out}/src/linux-v5"
 linux_v5_build="${out}/linux-v5"
-linux_v6_build="${out}/linux-v6"
+linux_v7_build="${out}/linux-v7"
 linux_david_base_src="${out}/src/linux-david-base"
 linux_david_base_build="${out}/linux-david-base"
 linux_david_fix_src="${out}/src/linux-david-fix"
@@ -36,8 +36,8 @@ fetch_all()
 			subprojects/keycodemapdb
 	fi
 
-	if [ "$(git -C "${linux_src}" rev-parse HEAD)" != "${LINUX_V6_COMMIT}" ]; then
-		echo "linux/ is not pinned to LINUX_V6_COMMIT; update submodules" >&2
+	if [ "$(git -C "${linux_src}" rev-parse HEAD)" != "${LINUX_V7_COMMIT}" ]; then
+		echo "linux/ is not pinned to LINUX_V7_COMMIT; update submodules" >&2
 		exit 1
 	fi
 	if [ "$(git -C "${qemu_src}" rev-parse HEAD)" != "${QEMU_COMMIT}" ]; then
@@ -109,9 +109,9 @@ build_one_kernel() # name
 		source="${linux_v5_src}"
 		build="${linux_v5_build}"
 		;;
-	v6)
+	v7)
 		source="${linux_src}"
-		build="${linux_v6_build}"
+		build="${linux_v7_build}"
 		;;
 	david-base)
 		source="${linux_david_base_src}"
@@ -146,7 +146,7 @@ build_one_kernel() # name
 build_headers()
 {
 	mkdir -p "${headers}"
-	make -C "${linux_src}" O="${linux_v6_build}" \
+	make -C "${linux_src}" O="${linux_v7_build}" \
 		INSTALL_HDR_PATH="${headers}" headers_install
 }
 
@@ -241,7 +241,7 @@ initramfs)
 all)
 	fetch_all
 	build_one_kernel v5
-	build_one_kernel v6
+	build_one_kernel v7
 	build_one_kernel david-base
 	build_one_kernel david-fix
 	build_headers

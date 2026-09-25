@@ -1,6 +1,6 @@
 .PHONY: all build test clean fetch kernels
 
-KERNELS := v5 v6 david-base david-fix
+KERNELS := v5 v7 david-base david-fix
 # Ninja cannot join make's jobserver, so QEMU takes a fixed slice on top
 # of the shared pool. Overridable: make build QEMU_JOBS=16.
 QEMU_JOBS ?= 8
@@ -32,7 +32,7 @@ kernel-%:
 qemu: fetch
 	./scripts/build.sh qemu
 
-headers: kernel-v6
+headers: kernel-v7
 	+./scripts/build.sh headers
 
 testsuite: headers
@@ -46,7 +46,7 @@ test: build
 	./scripts/run-tests.sh --jobs $(TEST_JOBS) all
 
 clean:
-	rm -rf -- "$(CURDIR)/out/linux" "$(CURDIR)/out/linux-v5" "$(CURDIR)/out/linux-v6" \
+	rm -rf -- "$(CURDIR)/out/linux" "$(CURDIR)/out/linux-v5" "$(CURDIR)/out/linux-v7" \
 		"$(CURDIR)/out/linux-david-base" "$(CURDIR)/out/linux-david-fix" \
 		"$(CURDIR)/out/qemu" "$(CURDIR)/out/tests" \
 		"$(CURDIR)/out/headers" "$(CURDIR)/out/rootfs" \
