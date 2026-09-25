@@ -11,7 +11,7 @@ TEST_JOBS ?= 1
 
 all: test
 
-# fetch (serial git) runs first; the four kernels and QEMU then build in
+# fetch (serial git) runs first; the two kernels and QEMU then build in
 # parallel sharing one jobserver pool, followed by the serial tail.
 build: kernels qemu testsuite initramfs
 	@echo "Build complete: $(CURDIR)/out"

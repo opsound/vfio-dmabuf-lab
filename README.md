@@ -36,10 +36,10 @@ Useful narrower commands:
 ./run test nvgrace-v7            # bare test: default kernel (v7 here)
 ./run test dmabuf
 ./run test nvgrace-v5
-./run test v7:dmabuf              # one kernel:test matrix entry
-./run test v7                     # every matrix entry for one kernel
-./run test --jobs 4 all              # up to 4 guests at once, fail-fast
-./run test --dry-run all             # list the matrix without running it
+./run test v7:dmabuf             # one kernel:test matrix entry
+./run test v7                    # every matrix entry for one kernel
+./run test --jobs 4 all          # up to 4 guests at once, fail-fast
+./run test --dry-run all         # list the matrix without running it
 make clean
 ```
 
@@ -71,7 +71,8 @@ with fail-fast and a closing per-entry summary.
   extends EDU with an opt-in nvgrace test personality and pins the GitHub
   mirror of QEMU's `keycodemapdb` build dependency.
 - `tests/` contains the static PID 1 guest orchestrator (`guest-init.c`),
-  the nvgrace user-access test, and the VFIO BAR fault/reset reproducer.
+  the nvgrace user-access test, and shared helpers for opening legacy
+  VFIO container/group devices.
 - `configs/` contains the exact lockdep-enabled x86 kernel configuration.
 - `scripts/` owns host builds and QEMU launch/result checking.
 
