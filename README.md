@@ -140,6 +140,15 @@ group membership mutation against reset paths") that completes the fix
 for the stale `lockdep_assert_held(&group->mutex)` assertions in the
 reset path, so the bar is green.
 
+Verdicts read result markers from a dedicated channel, not the shared serial
+console: QEMU attaches a second serial port, guest PID 1 writes exactly one
+`RESULT=PASS` line to `/dev/ttyS1`, and the runner checks
+`out/logs/<kernel>-<test>.markers`. The kernel never writes to that port
+(`console=ttyS0`), so a printk cannot land mid-line inside the marker the way
+it can on the serial log, whose stdout copy is kept for context. The deadlock
+expectation needs no marker: it greps the serial log for the test's progress
+lines and the lockdep report.
+
 The setup exercises the real kernel VFIO, rwsem, mmap, DMA-BUF, userfaultfd,
 and IOMMU paths. QEMU owns only the hardware/firmware emulation. It does not
 validate Grace hardware, CXL behavior, cache attributes, or performance.

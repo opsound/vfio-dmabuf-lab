@@ -18,6 +18,14 @@
 
 #define BDF "0000:01:00.0"
 
+/*
+ * QEMU's second serial port carries exactly one line per boot: the result
+ * marker written by finish().  The kernel never writes there (console=ttyS0),
+ * so unlike the shared serial console this line cannot be split mid-write
+ * by an interleaved printk.  The host verdict reads this channel.
+ */
+#define MARKERS_TTY "/dev/ttyS1"
+
 static int write_text(const char *path, const char *value)
 {
 	ssize_t length = strlen(value);
@@ -237,14 +245,38 @@ static int run_nvgrace_v5(void)
 
 static void finish(const char *marker, int status)
 {
-	printf("%s=%s\n", marker, status ? "FAIL" : "PASS");
+	char line[64];
+	int length;
+	int markers_fd;
+
+	length = snprintf(line, sizeof(line), "%s=%s\n", marker,
+			  status ? "FAIL" : "PASS");
+	printf("%s", line);
 	fflush(NULL);
+
+	/* Verdict copy on the markers-only serial line.  Best effort: the
+	 * host fails loudly when this line is absent or malformed. */
+	markers_fd = open(MARKERS_TTY, O_WRONLY);
+	if (markers_fd < 0) {
+		fprintf(stderr, "cannot open %s: %s\n", MARKERS_TTY,
+			strerror(errno));
+	} else if (write(markers_fd, line, length) != length) {
+		fprintf(stderr, "short write to %s\n", MARKERS_TTY);
+		close(markers_fd);
+		markers_fd = -1;
+	}
+
 	/*
-	 * Drain the serial console before the sysrq poweroff below: without
-	 * this, the kernel's "sysrq: Power Off" message can land mid-line
-	 * inside the result marker the host greps for.
+	 * Drain the serial lines before the sysrq poweroff below: without
+	 * this, buffered bytes may never reach the host, and the kernel's
+	 * "sysrq: Power Off" message can land mid-line inside the stdout
+	 * marker copy (kept for the serial log; the verdict reads ttyS1).
 	 */
 	tcdrain(STDOUT_FILENO);
+	if (markers_fd >= 0) {
+		tcdrain(markers_fd);
+		close(markers_fd);
+	}
 	sync();
 	if (write_text("/proc/sysrq-trigger", "o"))
 		reboot(RB_POWER_OFF);

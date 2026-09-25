@@ -179,21 +179,44 @@ say_lines() # stdin -> stderr, one locked line at a time
 	done
 }
 
+# The markers file must contain exactly the expected line.  guest-init writes
+# one line to the markers-only serial channel per boot and the kernel never
+# writes there, so anything else (empty, FAIL value, extra lines) fails.
+marker_ok() # markers result
+{
+	[ "$(wc -l <"$1" | tr -d ' ')" -eq 1 ] && grep -q "$2" "$1"
+}
+
+show_markers() # markers
+{
+	local content
+
+	content="$(tr -d '\r' <"$1" 2>/dev/null)"
+	if [ -z "${content}" ]; then
+		say_err "markers ($(basename "$1")): (empty or unreadable)"
+	else
+		say_err "markers ($(basename "$1")): ${content}"
+	fi
+}
+
 check_clean()
 {
 	local label="$1"
 	local log="$2"
-	local qemu_status="$3"
-	local result="$4"
+	local markers="$3"
+	local qemu_status="$4"
+	local result="$5"
 
-	if [ "${qemu_status}" -ne 0 ] || ! grep -q "${result}" "${log}"; then
+	if [ "${qemu_status}" -ne 0 ] || ! marker_ok "${markers}" "${result}"; then
 		say_err "FAIL: ${label}; QEMU status ${qemu_status}"
+		show_markers "${markers}"
 		tail -n 80 "${log}" | say_lines
 		return 1
 	fi
 
 	if grep -Eq 'WARNING:|BUG:|KASAN:|UBSAN:|possible circular locking|hung task|soft lockup|hard LOCKUP' "${log}"; then
 		say_err "FAIL: ${label}; kernel warning or fault signature found"
+		show_markers "${markers}"
 		tail -n 80 "${log}" | say_lines
 		return 1
 	fi
@@ -205,9 +228,10 @@ check_lockdep_warning()
 {
 	local label="$1"
 	local log="$2"
-	local qemu_status="$3"
-	local result="$4"
-	local frames="$5"
+	local markers="$3"
+	local qemu_status="$4"
+	local result="$5"
+	local frames="$6"
 	local frame
 
 	if [ -z "${frames}" ]; then
@@ -215,15 +239,17 @@ check_lockdep_warning()
 		return 1
 	fi
 	if [ "${qemu_status}" -ne 0 ] ||
-	   ! grep -q "${result}" "${log}" ||
+	   ! marker_ok "${markers}" "${result}" ||
 	   ! grep -q 'possible circular locking dependency detected' "${log}"; then
 		say_err "FAIL: ${label}; expected lockdep warning was not reproduced"
+		show_markers "${markers}"
 		tail -n 100 "${log}" | say_lines
 		return 1
 	fi
 	while IFS= read -r frame; do
 		if [ -n "${frame}" ] && ! grep -qE "${frame}" "${log}"; then
 			say_err "FAIL: ${label}; expected lockdep frame '${frame}' not found"
+			show_markers "${markers}"
 			tail -n 100 "${log}" | say_lines
 			return 1
 		fi
@@ -317,14 +343,19 @@ vfio_pci_ioctl_reset|vfio_pci_core_ioctl"
 	fi
 
 	log="${logs}/${kernel}-${test}.log"
+	markers="${logs}/${kernel}-${test}.markers"
 	: > "${log}"
+	: > "${markers}"
 	say "==> Running ${kernel}:${test} (expect ${expectation})"
 	set +e
+	# First serial is the ttyS0 console log; the second is the ttyS1
+	# markers channel, which carries only guest-init's result line.
 	timeout "${timeout_seconds}" "${qemu}" \
 		-machine q35,kernel-irqchip=split \
 		-accel kvm -cpu host -m "${memory}" -smp 4 \
 		-nodefaults -no-user-config -no-reboot \
 		-display none -monitor none -serial "file:${log}" \
+		-serial "file:${markers}" \
 		-kernel "${image}" -initrd "${initramfs}" \
 		-append "console=ttyS0 earlyprintk=serial panic=-1 oops=panic intel_iommu=on ${iommu_cmdline} vfio_iommu_type1.allow_unsafe_interrupts=1 ${extra_append} -- ${test}" \
 		-device "${iommu}" \
@@ -335,10 +366,10 @@ vfio_pci_ioctl_reset|vfio_pci_core_ioctl"
 
 	case "${expectation}" in
 	clean)
-		check_clean "${kernel}:${test}" "${log}" "${qemu_status}" "${result}"
+		check_clean "${kernel}:${test}" "${log}" "${markers}" "${qemu_status}" "${result}"
 		;;
 	lockdep-warning)
-		check_lockdep_warning "${kernel}:${test}" "${log}" "${qemu_status}" "${result}" "${lockdep_frames}"
+		check_lockdep_warning "${kernel}:${test}" "${log}" "${markers}" "${qemu_status}" "${result}" "${lockdep_frames}"
 		;;
 	deadlock-timeout)
 		check_deadlock_timeout "${kernel}:${test}" "${log}" "${qemu_status}" "${deadlock_marker}"
