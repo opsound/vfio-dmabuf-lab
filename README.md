@@ -16,11 +16,11 @@ O_PATH fd, so `dmabuf->file` keeps pointing at freed memory.
 `vfio_pci_dma_buf_move()` calls `get_file_active()` on that pointer whenever
 the device is reset, enters D3hot, or has memory decoding disabled.
 
-The fix is two patches on v7.3-rc6, branch `dmabuf-stale-file-fix` in
-`opsound/linux`:
-
-- `drm/vmwgfx: use get_file_active() for the cached prime dma_buf`
-- `dma-buf: clear dmabuf->file when the file is released`
+The fix, `dma-buf: release the exporter when the file is released`, is one
+patch on v7.3-rc6, branch `dmabuf-stale-file-fix` in `opsound/linux`. It runs
+the exporter's `->release()` from the file release again and leaves only the
+name and the `struct dma_buf` itself for `d_release`, because
+`dmabuffs_dname()` reads nothing else.
 
 To reproduce on stock v7.3-rc6 and check the fix:
 
@@ -63,8 +63,9 @@ The buggy address belongs to the object at ff110000029defc0
  which belongs to the cache filp of size 352
 ```
 
-The vmwgfx patch is only compile-tested here. QEMU's `vmware-svga` has no
-pitchlock capability, so vmwgfx refuses to probe ("Hardware has no
+vmwgfx's cached `prime->dma_buf` has the same stale-file problem, and the fix
+covers it as well. That path is not exercised here: QEMU's `vmware-svga` has
+no pitchlock capability, so vmwgfx refuses to probe ("Hardware has no
 pitchlock").
 
 ## One-command run
