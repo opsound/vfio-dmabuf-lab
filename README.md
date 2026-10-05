@@ -16,10 +16,13 @@ O_PATH fd, so `dmabuf->file` keeps pointing at freed memory.
 `vfio_pci_dma_buf_move()` calls `get_file_active()` on that pointer whenever
 the device is reset, enters D3hot, or has memory decoding disabled.
 
-The fix, `dma-buf: release the exporter when the file is released`, is one
-patch on v7.3-rc6, branch `dmabuf-stale-file-fix` in `opsound/linux`. It runs
-the exporter's `->release()` from the file release again and leaves only the
-name and the `struct dma_buf` itself for `d_release`, because
+The fix is one patch on v7.3-rc6, branch `dmabuf-stale-file-fix` in
+`opsound/linux`:
+
+- `dma-buf: fix use-after-free of dmabuf->file while the dentry is held`
+
+It runs the exporter's `->release()` from the file release again and leaves
+only the name and the `struct dma_buf` itself for `d_release`, because
 `dmabuffs_dname()` reads nothing else.
 
 To reproduce on stock v7.3-rc6 and check the fix:
