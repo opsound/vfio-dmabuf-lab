@@ -1,6 +1,6 @@
 .PHONY: all build test clean fetch kernels
 
-KERNELS := v5 v7
+KERNELS := v5 v7 rc6 rc6-fix
 # Ninja cannot join make's jobserver, so QEMU takes a fixed slice on top
 # of the shared pool. Overridable: make build QEMU_JOBS=16.
 QEMU_JOBS ?= 8
@@ -11,7 +11,7 @@ TEST_JOBS ?= 1
 
 all: test
 
-# fetch (serial git) runs first; the two kernels and QEMU then build in
+# fetch (serial git) runs first; the kernels and QEMU then build in
 # parallel sharing one jobserver pool, followed by the serial tail.
 build: kernels qemu testsuite initramfs
 	@echo "Build complete: $(CURDIR)/out"
@@ -47,6 +47,7 @@ test: build
 
 clean:
 	rm -rf -- "$(CURDIR)/out/linux" "$(CURDIR)/out/linux-v5" "$(CURDIR)/out/linux-v7" \
+		"$(CURDIR)/out/linux-rc6" "$(CURDIR)/out/linux-rc6-fix" \
 		"$(CURDIR)/out/qemu" "$(CURDIR)/out/tests" \
 		"$(CURDIR)/out/headers" "$(CURDIR)/out/rootfs" \
 		"$(CURDIR)/out/logs" "$(CURDIR)/out/initramfs.cpio.gz"

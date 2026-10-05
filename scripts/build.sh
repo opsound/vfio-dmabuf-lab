@@ -10,6 +10,10 @@ out="${root}/out"
 linux_v5_src="${out}/src/linux-v5"
 linux_v5_build="${out}/linux-v5"
 linux_v7_build="${out}/linux-v7"
+linux_rc6_src="${out}/src/linux-rc6"
+linux_rc6_build="${out}/linux-rc6"
+linux_rc6_fix_src="${out}/src/linux-rc6-fix"
+linux_rc6_fix_build="${out}/linux-rc6-fix"
 qemu_build="${out}/qemu"
 test_build="${out}/tests"
 headers="${out}/headers"
@@ -44,6 +48,10 @@ fetch_all()
 
 	mkdir -p "${out}/src"
 	ensure_kernel_source v5 "${linux_v5_src}" "${LINUX_V5_COMMIT}" "${LINUX_V5_REF}"
+	ensure_kernel_source rc6-fix "${linux_rc6_fix_src}" \
+		"${LINUX_RC6_FIX_COMMIT}" "${LINUX_FIX_REF}"
+	ensure_kernel_source rc6 "${linux_rc6_src}" "${LINUX_RC6_COMMIT}" \
+		"${LINUX_FIX_REF}"
 }
 
 ensure_kernel_source()
@@ -98,6 +106,7 @@ build_one_kernel() # name
 {
 	local name="$1"
 	local source build
+	local fragment=""
 
 	case "${name}" in
 	v5)
@@ -108,6 +117,16 @@ build_one_kernel() # name
 		source="${linux_src}"
 		build="${linux_v7_build}"
 		;;
+	rc6)
+		source="${linux_rc6_src}"
+		build="${linux_rc6_build}"
+		fragment="${root}/configs/kasan.config"
+		;;
+	rc6-fix)
+		source="${linux_rc6_fix_src}"
+		build="${linux_rc6_fix_build}"
+		fragment="${root}/configs/kasan.config"
+		;;
 	*)
 		echo "unknown kernel: ${name}" >&2
 		exit 2
@@ -117,6 +136,10 @@ build_one_kernel() # name
 	echo "==> Building Linux ${name} ($(git -C "${source}" rev-parse --short HEAD))"
 	mkdir -p "${build}"
 	install -m 0644 "${root}/configs/linux-x86_64.config" "${build}/.config"
+	if [ -n "${fragment}" ]; then
+		"${source}/scripts/kconfig/merge_config.sh" -m -O "${build}" \
+			"${build}/.config" "${fragment}"
+	fi
 	make -C "${source}" O="${build}" olddefconfig
 	case "${MAKEFLAGS:-}" in
 	*jobserver*)
@@ -170,6 +193,10 @@ build_tests()
 		-o "${test_build}/vfio_dmabuf_mmap_test" \
 		"${linux_src}/tools/testing/selftests/vfio/standalone/vfio_dmabuf_mmap_test.c"
 	"${cc}" -O2 -g -Wall -Wextra -Werror -static \
+		-I"${headers}/include" \
+		-o "${test_build}/vfio_dmabuf_opath_uaf_test" \
+		"${root}/tests/vfio_dmabuf_opath_uaf_test.c"
+	"${cc}" -O2 -g -Wall -Wextra -Werror -static \
 		-o "${test_build}/guest-init" "${root}/tests/guest-init.c"
 }
 
@@ -184,6 +211,8 @@ build_initramfs()
 		"${rootfs}/nvgrace_uaccess_test"
 	install -m 0755 "${test_build}/vfio_dmabuf_mmap_test" \
 		"${rootfs}/vfio_dmabuf_mmap_test"
+	install -m 0755 "${test_build}/vfio_dmabuf_opath_uaf_test" \
+		"${rootfs}/vfio_dmabuf_opath_uaf_test"
 	(
 		cd "${rootfs}"
 		find . -print0 | LC_ALL=C sort -z | cpio --null -o --format=newc
@@ -223,6 +252,8 @@ all)
 	fetch_all
 	build_one_kernel v5
 	build_one_kernel v7
+	build_one_kernel rc6
+	build_one_kernel rc6-fix
 	build_headers
 	build_qemu
 	build_tests

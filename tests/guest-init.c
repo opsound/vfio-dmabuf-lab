@@ -212,6 +212,19 @@ static int run_dmabuf(void)
 	return 0;
 }
 
+static int run_dmabuf_opath_uaf(void)
+{
+	char group[32];
+	char *const argv[] = {
+		"/vfio_dmabuf_opath_uaf_test", BDF, group, NULL,
+	};
+
+	if (bind_driver("vfio-pci") || iommu_group(group, sizeof(group)))
+		return 1;
+	printf("VFIO_OPATH_UAF_BDF=%s group=%s\n", BDF, group);
+	return run_program(argv);
+}
+
 static int run_nvgrace_v5(void)
 {
 	char group[32];
@@ -298,6 +311,9 @@ int main(int argc, char **argv)
 	} else if (!strcmp(mode, "dmabuf")) {
 		status = run_dmabuf();
 		finish("VFIO_DMABUF_RESULT", status);
+	} else if (!strcmp(mode, "dmabuf-opath-uaf")) {
+		status = run_dmabuf_opath_uaf();
+		finish("VFIO_OPATH_UAF_RESULT", status);
 	} else {
 		fprintf(stderr, "unknown vfio_test mode: %s\n", mode);
 		finish("VFIO_LAB_RESULT", 1);

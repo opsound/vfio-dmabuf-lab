@@ -12,8 +12,8 @@ have_flock=0
 usage()
 {
 	echo "usage: $0 [--jobs N] [--dry-run] [all|<kernel>|<test>|<kernel>:<test>]" >&2
-	echo "  kernels: v5 v7" >&2
-	echo "  tests: nvgrace-v7 dmabuf nvgrace-v5" >&2
+	echo "  kernels: v5 v7 rc6 rc6-fix" >&2
+	echo "  tests: nvgrace-v7 dmabuf nvgrace-v5 dmabuf-opath-uaf" >&2
 	exit 2
 }
 
@@ -92,6 +92,8 @@ MATRIX=(
 	"v7 nvgrace-v7 clean"
 	"v7 dmabuf clean"
 	"v5 nvgrace-v5 deadlock-timeout"
+	"rc6 dmabuf-opath-uaf kasan-uaf"
+	"rc6-fix dmabuf-opath-uaf clean"
 )
 
 matrix_expectation()
@@ -108,19 +110,20 @@ matrix_expectation()
 	return 1
 }
 
-default_kernel()
+# Every matrix entry for one test, in MATRIX order.
+test_entries() # test
 {
-	case "$1" in
-	nvgrace-v7|dmabuf)
-		echo v7
-		;;
-	nvgrace-v5)
-		echo v5
-		;;
-	*)
-		return 1
-		;;
-	esac
+	local entry kernel test expectation
+	local found=1
+
+	for entry in "${MATRIX[@]}"; do
+		read -r kernel test expectation <<< "${entry}"
+		if [ "${test}" = "$1" ]; then
+			echo "${kernel} ${test}"
+			found=0
+		fi
+	done
+	return "${found}"
 }
 
 kernel_image()
@@ -131,6 +134,9 @@ kernel_image()
 		;;
 	v7)
 		echo "${root}/out/linux-v7/arch/x86/boot/bzImage"
+		;;
+	rc6|rc6-fix)
+		echo "${root}/out/linux-$1/arch/x86/boot/bzImage"
 		;;
 	*)
 		return 1
@@ -233,6 +239,29 @@ check_deadlock_timeout()
 	return 1
 }
 
+# The unfixed kernel must reach the stale dmabuf->file through the VFIO
+# revoke walk and have KASAN report it; any other fault is a failure.
+check_kasan_uaf()
+{
+	local label="$1"
+	local log="$2"
+	local markers="$3"
+	local qemu_status="$4"
+	local result="$5"
+
+	if [ "${qemu_status}" -eq 0 ] && marker_ok "${markers}" "${result}" &&
+	   grep -q 'BUG: KASAN: slab-use-after-free in get_file_active' "${log}" &&
+	   grep -q 'vfio_pci_dma_buf_move' "${log}" &&
+	   grep -q 'which belongs to the cache filp' "${log}"; then
+		say "PASS: ${label}; expected KASAN use-after-free reproduced; log: ${log}"
+		return 0
+	fi
+	say_err "FAIL: ${label}; expected KASAN use-after-free was not reproduced"
+	show_markers "${markers}"
+	tail -n 80 "${log}" | say_lines
+	return 1
+}
+
 run_entry()
 {
 	local kernel="$1"
@@ -267,6 +296,12 @@ run_entry()
 		memory=2048M
 		timeout_seconds=180
 		result="VFIO_DMABUF_RESULT=PASS"
+		;;
+	dmabuf-opath-uaf)
+		device="bochs-display,bus=rp1,addr=0x0,vgamem=64M"
+		memory=2048M
+		timeout_seconds=180
+		result="VFIO_OPATH_UAF_RESULT=PASS"
 		;;
 	nvgrace-v5)
 		device="edu,nvgrace-test=on,nvgrace-mem-base=0x40000000,nvgrace-mem-size=0x60000000,bus=rp1,addr=0x0"
@@ -315,6 +350,9 @@ run_entry()
 	deadlock-timeout)
 		check_deadlock_timeout "${kernel}:${test}" "${log}" "${qemu_status}" "${deadlock_marker}"
 		;;
+	kasan-uaf)
+		check_kasan_uaf "${kernel}:${test}" "${log}" "${markers}" "${qemu_status}" "${result}"
+		;;
 	*)
 		say_err "unknown expectation: ${expectation}"
 		return 2
@@ -355,8 +393,10 @@ all)
 			say_err "no matrix entries for kernel: ${selection}"
 			exit 2
 		fi
-	elif kernel="$(default_kernel "${selection}")"; then
-		entries+=("${kernel} ${selection}")
+	elif matches="$(test_entries "${selection}")"; then
+		while read -r kernel test; do
+			entries+=("${kernel} ${test}")
+		done <<< "${matches}"
 	else
 		usage
 	fi
