@@ -1,6 +1,6 @@
 .PHONY: all build test clean fetch kernels
 
-KERNELS := v5 v7 rc6 rc6-fix
+KERNELS := v5 v7 rc6 rc6-fix v8 v8-b1lite
 # Ninja cannot join make's jobserver, so QEMU takes a fixed slice on top
 # of the shared pool. Overridable: make build QEMU_JOBS=16.
 QEMU_JOBS ?= 8
@@ -35,7 +35,10 @@ qemu: fetch
 headers: kernel-v7
 	+./scripts/build.sh headers
 
-testsuite: headers
+headers-v8: kernel-v8
+	+./scripts/build.sh headers-v8
+
+testsuite: headers headers-v8
 	./scripts/build.sh tests
 
 initramfs: testsuite
@@ -48,6 +51,8 @@ test: build
 clean:
 	rm -rf -- "$(CURDIR)/out/linux" "$(CURDIR)/out/linux-v5" "$(CURDIR)/out/linux-v7" \
 		"$(CURDIR)/out/linux-rc6" "$(CURDIR)/out/linux-rc6-fix" \
+		"$(CURDIR)/out/linux-v8" "$(CURDIR)/out/linux-v8-b1lite" \
+		"$(CURDIR)/out/headers-v8" \
 		"$(CURDIR)/out/qemu" "$(CURDIR)/out/tests" \
 		"$(CURDIR)/out/headers" "$(CURDIR)/out/rootfs" \
 		"$(CURDIR)/out/logs" "$(CURDIR)/out/initramfs.cpio.gz"

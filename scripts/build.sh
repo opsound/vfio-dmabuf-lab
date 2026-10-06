@@ -14,6 +14,11 @@ linux_rc6_src="${out}/src/linux-rc6"
 linux_rc6_build="${out}/linux-rc6"
 linux_rc6_fix_src="${out}/src/linux-rc6-fix"
 linux_rc6_fix_build="${out}/linux-rc6-fix"
+linux_v8_src="${out}/src/linux-v8"
+linux_v8_build="${out}/linux-v8"
+linux_v8_b1lite_src="${out}/src/linux-v8-b1lite"
+linux_v8_b1lite_build="${out}/linux-v8-b1lite"
+headers_v8="${out}/headers-v8"
 qemu_build="${out}/qemu"
 test_build="${out}/tests"
 headers="${out}/headers"
@@ -52,6 +57,10 @@ fetch_all()
 		"${LINUX_RC6_FIX_COMMIT}" "${LINUX_FIX_REF}"
 	ensure_kernel_source rc6 "${linux_rc6_src}" "${LINUX_RC6_COMMIT}" \
 		"${LINUX_FIX_REF}"
+	ensure_kernel_source v8 "${linux_v8_src}" "${LINUX_V8_COMMIT}" \
+		"${LINUX_V8_REF}"
+	ensure_kernel_source v8-b1lite "${linux_v8_b1lite_src}" \
+		"${LINUX_V8_B1LITE_COMMIT}" "${LINUX_V8_B1LITE_REF}"
 }
 
 ensure_kernel_source()
@@ -127,6 +136,16 @@ build_one_kernel() # name
 		build="${linux_rc6_fix_build}"
 		fragment="${root}/configs/kasan.config"
 		;;
+	v8)
+		source="${linux_v8_src}"
+		build="${linux_v8_build}"
+		fragment="${root}/configs/kasan.config"
+		;;
+	v8-b1lite)
+		source="${linux_v8_b1lite_src}"
+		build="${linux_v8_b1lite_build}"
+		fragment="${root}/configs/kasan.config"
+		;;
 	*)
 		echo "unknown kernel: ${name}" >&2
 		exit 2
@@ -158,6 +177,14 @@ build_headers()
 	mkdir -p "${headers}"
 	make -C "${linux_src}" O="${linux_v7_build}" \
 		INSTALL_HDR_PATH="${headers}" headers_install
+}
+
+# Matt's v8 selftest uses v8 uapi (the DMA-BUF revoke feature).
+build_headers_v8()
+{
+	mkdir -p "${headers_v8}"
+	make -C "${linux_v8_src}" O="${linux_v8_build}" \
+		INSTALL_HDR_PATH="${headers_v8}" headers_install
 }
 
 build_qemu()
@@ -192,6 +219,12 @@ build_tests()
 		-I"${headers}/include" \
 		-o "${test_build}/vfio_dmabuf_mmap_test" \
 		"${linux_src}/tools/testing/selftests/vfio/standalone/vfio_dmabuf_mmap_test.c"
+	# Matt's v8 selftest misses <stdbool.h> and trips -Wsign-compare;
+	# build it as posted rather than patching the pinned tree.
+	"${cc}" -O2 -g -Wall -Wextra -Werror -Wno-sign-compare -static \
+		-include stdbool.h -I"${headers_v8}/include" \
+		-o "${test_build}/vfio_dmabuf_mmap_test_v8" \
+		"${linux_v8_src}/tools/testing/selftests/vfio/standalone/vfio_dmabuf_mmap_test.c"
 	"${cc}" -O2 -g -Wall -Wextra -Werror -static \
 		-I"${headers}/include" \
 		-o "${test_build}/vfio_dmabuf_opath_uaf_test" \
@@ -211,6 +244,8 @@ build_initramfs()
 		"${rootfs}/nvgrace_uaccess_test"
 	install -m 0755 "${test_build}/vfio_dmabuf_mmap_test" \
 		"${rootfs}/vfio_dmabuf_mmap_test"
+	install -m 0755 "${test_build}/vfio_dmabuf_mmap_test_v8" \
+		"${rootfs}/vfio_dmabuf_mmap_test_v8"
 	install -m 0755 "${test_build}/vfio_dmabuf_opath_uaf_test" \
 		"${rootfs}/vfio_dmabuf_opath_uaf_test"
 	(
@@ -221,7 +256,7 @@ build_initramfs()
 
 usage()
 {
-	echo "usage: $0 [all|fetch|kernel <name>|headers|qemu|tests|initramfs]" >&2
+	echo "usage: $0 [all|fetch|kernel <name>|headers|headers-v8|qemu|tests|initramfs]" >&2
 	exit 2
 }
 
@@ -239,6 +274,9 @@ kernel)
 headers)
 	build_headers
 	;;
+headers-v8)
+	build_headers_v8
+	;;
 qemu)
 	build_qemu
 	;;
@@ -254,7 +292,10 @@ all)
 	build_one_kernel v7
 	build_one_kernel rc6
 	build_one_kernel rc6-fix
+	build_one_kernel v8
+	build_one_kernel v8-b1lite
 	build_headers
+	build_headers_v8
 	build_qemu
 	build_tests
 	build_initramfs

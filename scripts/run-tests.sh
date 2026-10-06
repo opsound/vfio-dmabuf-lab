@@ -12,8 +12,8 @@ have_flock=0
 usage()
 {
 	echo "usage: $0 [--jobs N] [--dry-run] [all|<kernel>|<test>|<kernel>:<test>]" >&2
-	echo "  kernels: v5 v7 rc6 rc6-fix" >&2
-	echo "  tests: nvgrace-v7 dmabuf nvgrace-v5 dmabuf-opath-uaf" >&2
+	echo "  kernels: v5 v7 rc6 rc6-fix v8 v8-b1lite" >&2
+	echo "  tests: nvgrace-v7 dmabuf nvgrace-v5 dmabuf-opath-uaf dmabuf-v8" >&2
 	exit 2
 }
 
@@ -94,6 +94,12 @@ MATRIX=(
 	"v5 nvgrace-v5 deadlock-timeout"
 	"rc6 dmabuf-opath-uaf kasan-uaf"
 	"rc6-fix dmabuf-opath-uaf clean"
+	"v8 dmabuf-v8 clean"
+	"v8 dmabuf-opath-uaf kasan-uaf"
+	"v8-b1lite dmabuf-v8 clean"
+	"v8-b1lite dmabuf-opath-uaf clean"
+	"v8 nvgrace-v7 clean"
+	"v8-b1lite nvgrace-v7 clean"
 )
 
 matrix_expectation()
@@ -135,7 +141,7 @@ kernel_image()
 	v7)
 		echo "${root}/out/linux-v7/arch/x86/boot/bzImage"
 		;;
-	rc6|rc6-fix)
+	rc6|rc6-fix|v8|v8-b1lite)
 		echo "${root}/out/linux-$1/arch/x86/boot/bzImage"
 		;;
 	*)
@@ -296,6 +302,12 @@ run_entry()
 		memory=2048M
 		timeout_seconds=180
 		result="VFIO_DMABUF_RESULT=PASS"
+		;;
+	dmabuf-v8)
+		device="bochs-display,bus=rp1,addr=0x0,vgamem=64M"
+		memory=2048M
+		timeout_seconds=180
+		result="VFIO_DMABUF_V8_RESULT=PASS"
 		;;
 	dmabuf-opath-uaf)
 		device="bochs-display,bus=rp1,addr=0x0,vgamem=64M"

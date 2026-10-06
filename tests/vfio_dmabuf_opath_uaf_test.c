@@ -10,6 +10,10 @@
  * the grace period, so an unfixed kernel reports a use-after-free from
  * get_file_active(&priv->dmabuf->file). A second dma-buf stays open
  * throughout so the walk also visits a live entry.
+ *
+ * Finally, keep one released dma-buf held across the device close, so
+ * vfio_pci_dma_buf_cleanup() has to deal with an entry whose file is
+ * gone, and drop the O_PATH fd afterwards so ->release() runs last.
  */
 
 #include <stdint.h>
@@ -50,7 +54,8 @@ int main(int argc, char **argv)
 {
 	struct vfio_region_info region, config = { .argsz = sizeof(config) };
 	struct timespec gp = { .tv_nsec = 200 * 1000 * 1000 };
-	int container_fd, group_fd, dev_fd, live_fd;
+	int container_fd, group_fd, dev_fd, live_fd, held_fd, held_opath_fd;
+	char held_path[64];
 	unsigned int index;
 	uint16_t cmd;
 	int i;
@@ -103,8 +108,23 @@ int main(int argc, char **argv)
 		close(opath_fd);
 	}
 
+	held_fd = export_dmabuf(dev_fd, index, getpagesize());
+	if (held_fd < 0)
+		fail("export held dma-buf");
+	snprintf(held_path, sizeof(held_path), "/proc/self/fd/%d", held_fd);
+	held_opath_fd = open(held_path, O_PATH | O_CLOEXEC);
+	if (held_opath_fd < 0)
+		fail("open O_PATH hold across close");
+	close(held_fd);
+	nanosleep(&gp, NULL);
+
 	close(live_fd);
 	close(dev_fd);
+	close(group_fd);
+	close(container_fd);
+	nanosleep(&gp, NULL);
+	close(held_opath_fd);
+	nanosleep(&gp, NULL);
 	printf("VFIO_OPATH_UAF_DONE iters=%d\n", ITERATIONS);
 	return EXIT_SUCCESS;
 }

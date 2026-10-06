@@ -71,6 +71,31 @@ covers it as well. That path is not exercised here: QEMU's `vmware-svga` has
 no pitchlock capability, so vmwgfx refuses to probe ("Hardware has no
 pitchlock").
 
+### vfio-only variant on Matt's v8 (B1-lite)
+
+`vfio-dmabuf-mmap-v8-b1lite` stages a vfio-only fix under Matt's v8 series
+instead of changing dma-buf. Its first patch, `vfio/pci: fix use-after-free
+of dmabuf->file in revoke and cleanup`, applies to mainline. Cleanup and
+`->release()` decide who removes an entry under the dma-buf's resv lock, and
+the walks stop using `get_file_active()`. Matt's v8 patches follow, with
+two conflicts resolved to his lock rename. A `fixup!` makes the revoke path
+unmap through an inode reference taken at export, because walks now also
+visit dma-bufs whose file is gone.
+
+```sh
+./run test v8          # Matt's v8 as posted
+./run test v8-b1lite   # the same series on top of B1-lite
+```
+
+| kernel    | dmabuf-v8 (Matt's selftest) | dmabuf-opath-uaf      | nvgrace-v7 |
+|-----------|-----------------------------|-----------------------|------------|
+| v8        | clean PASS                  | KASAN use-after-free  | clean PASS |
+| v8-b1lite | clean PASS                  | clean PASS            | clean PASS |
+
+The O_PATH test also keeps one released dma-buf across the device close,
+so on v8-b1lite `vfio_pci_dma_buf_cleanup()` detaches an entry whose file
+is gone and `->release()` runs afterwards with `priv->vdev` cleared.
+
 ## One-command run
 
 ```sh
@@ -189,6 +214,12 @@ combinations run:
 | v5         | nvgrace-v5    | deadlock, host timeout      |
 | rc6        | dmabuf-opath-uaf | KASAN use-after-free     |
 | rc6-fix    | dmabuf-opath-uaf | clean PASS               |
+| v8         | dmabuf-v8        | clean PASS               |
+| v8         | dmabuf-opath-uaf | KASAN use-after-free     |
+| v8         | nvgrace-v7       | clean PASS               |
+| v8-b1lite  | dmabuf-v8        | clean PASS               |
+| v8-b1lite  | dmabuf-opath-uaf | clean PASS               |
+| v8-b1lite  | nvgrace-v7       | clean PASS               |
 
 Verdicts read result markers from a dedicated channel, not the shared serial
 console: QEMU attaches a second serial port, guest PID 1 writes exactly one

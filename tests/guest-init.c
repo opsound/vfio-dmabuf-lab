@@ -192,17 +192,17 @@ static int run_nvgrace_v7(void)
 	return 0;
 }
 
-static int run_dmabuf(void)
+static int run_dmabuf(char *prog)
 {
 	char group[32];
 	int iteration;
 
 	if (bind_driver("vfio-pci") || iommu_group(group, sizeof(group)))
 		return 1;
-	printf("VFIO_DMABUF_BDF=%s group=%s\n", BDF, group);
+	printf("VFIO_DMABUF_BDF=%s group=%s prog=%s\n", BDF, group, prog);
 	for (iteration = 1; iteration <= 10; iteration++) {
 		char *const argv[] = {
-			"/vfio_dmabuf_mmap_test", "-r", BDF, "-g", group, NULL,
+			prog, "-r", BDF, "-g", group, NULL,
 		};
 
 		printf("VFIO_DMABUF_ITERATION=%d\n", iteration);
@@ -309,8 +309,11 @@ int main(int argc, char **argv)
 		status = run_nvgrace_v5();
 		finish("NVGRACE_V5_RESULT", status);
 	} else if (!strcmp(mode, "dmabuf")) {
-		status = run_dmabuf();
+		status = run_dmabuf("/vfio_dmabuf_mmap_test");
 		finish("VFIO_DMABUF_RESULT", status);
+	} else if (!strcmp(mode, "dmabuf-v8")) {
+		status = run_dmabuf("/vfio_dmabuf_mmap_test_v8");
+		finish("VFIO_DMABUF_V8_RESULT", status);
 	} else if (!strcmp(mode, "dmabuf-opath-uaf")) {
 		status = run_dmabuf_opath_uaf();
 		finish("VFIO_OPATH_UAF_RESULT", status);
