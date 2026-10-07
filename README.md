@@ -14,7 +14,8 @@ the dentry. An O_PATH fd on `/proc/self/fd/N` is enough: closing N frees the
 file, but `dma_buf_release()` and the exporter's `->release()` wait for the
 O_PATH fd, so `dmabuf->file` keeps pointing at freed memory.
 `vfio_pci_dma_buf_move()` calls `get_file_active()` on that pointer whenever
-the device is reset, enters D3hot, or has memory decoding disabled.
+the device is reset, enters D3hot, or has memory decoding disabled, and
+`vfio_pci_dma_buf_cleanup()` calls it when the device is closed.
 
 The fix is one patch on v7.3-rc6, branch `dmabuf-stale-file-fix` in
 `opsound/linux`:
@@ -25,30 +26,41 @@ It runs the exporter's `->release()` from the file release again and leaves
 only the name and the `struct dma_buf` itself for `d_release`, because
 `dmabuffs_dname()` reads nothing else.
 
-To reproduce on stock v7.3-rc6 and check the fix:
+To reproduce on stock v7.3-rc6 and check the fixes:
 
 ```sh
 ./run build
 ./run test dmabuf-opath-uaf
 ```
 
+This boots every kernel with a `dmabuf-opath-uaf` entry. rc6 and v8 are
+expected to hit the use-after-free; rc6-fix, rc6-matt and v8-b1lite carry a
+fix and are expected to run clean:
+
 ```
 ==> Running rc6:dmabuf-opath-uaf (expect kasan-uaf)
 PASS: rc6:dmabuf-opath-uaf; expected KASAN use-after-free reproduced; log: .../out/logs/rc6-dmabuf-opath-uaf.log
 ==> Running rc6-fix:dmabuf-opath-uaf (expect clean)
 PASS: rc6-fix:dmabuf-opath-uaf; log: .../out/logs/rc6-fix-dmabuf-opath-uaf.log
+==> Running rc6-matt:dmabuf-opath-uaf (expect clean)
+PASS: rc6-matt:dmabuf-opath-uaf; log: .../out/logs/rc6-matt-dmabuf-opath-uaf.log
+==> Running v8:dmabuf-opath-uaf (expect kasan-uaf)
+PASS: v8:dmabuf-opath-uaf; expected KASAN use-after-free reproduced; log: .../out/logs/v8-dmabuf-opath-uaf.log
+==> Running v8-b1lite:dmabuf-opath-uaf (expect clean)
+PASS: v8-b1lite:dmabuf-opath-uaf; log: .../out/logs/v8-b1lite-dmabuf-opath-uaf.log
 ```
 
 `tests/vfio_dmabuf_opath_uaf_test.c` is the whole reproducer, with no loop:
 export one page of BAR0 as a dma-buf, open `/proc/self/fd/N` with O_PATH,
 close N, sleep 100 ms, close the VFIO device. The device close runs
 `vfio_pci_dma_buf_cleanup()`, which walks the entry whose file is gone.
-One pass reproduces it every time (10 of 10 boots each on rc6 and v8).
+One pass is enough: it reproduced on 10 of 10 boots each on rc6 and v8.
 
-Both kernels use `configs/kasan.config` on top of the lab config.
-`CONFIG_SLUB_RCU_DEBUG` frees `struct file` only after an RCU grace period,
-which is what the sleep waits for; without it, 0 of 10 boots reported
-anything. Without `SLUB_RCU_DEBUG` the freed slot is usually reused instead:
+The rc6, rc6-fix, rc6-matt, v8 and v8-b1lite kernels use
+`configs/kasan.config` on top of the lab config. `CONFIG_SLUB_RCU_DEBUG`
+frees `struct file` only after an RCU grace period, which is what the sleep
+waits for; without the sleep, 0 of 10 boots each on rc6 and v8 reported
+anything. Without `SLUB_RCU_DEBUG` the freed slot can be reused instead:
 the walk then takes a reference on an unrelated file, which leaves no trace
 to observe. The unfixed kernel reports (trimmed from
 `out/logs/rc6-dmabuf-opath-uaf.log`):
@@ -81,21 +93,25 @@ passes the same test:
 ./run test rc6-matt:dmabuf-opath-uaf
 ```
 
-vmwgfx's cached `prime->dma_buf` has the same stale-file problem, and the fix
-covers it as well. That path is not exercised here: QEMU's `vmware-svga` has
-no pitchlock capability, so vmwgfx refuses to probe ("Hardware has no
+vmwgfx's cached `prime->dma_buf` has the same stale-file problem. The
+`dmabuf-stale-file-fix` patch covers it, because vmwgfx clears that pointer
+in `->release()`, which then runs before the file is freed. Matt's patch
+does not: vmwgfx would read a NULL `dmabuf->file` instead, as his posting
+points out. That path is not exercised here: QEMU's `vmware-svga` has no
+pitchlock capability, so vmwgfx refuses to probe ("Hardware has no
 pitchlock").
 
 ### vfio-only variant on Matt's v8 (B1-lite)
 
 `vfio-dmabuf-mmap-v8-b1lite` stages a vfio-only fix under Matt's v8 series
-instead of changing dma-buf. Its first patch, `vfio/pci: fix use-after-free
-of dmabuf->file in revoke and cleanup`, applies to mainline. Cleanup and
-`->release()` decide who removes an entry under the dma-buf's resv lock, and
-the walks stop using `get_file_active()`. Matt's v8 patches follow, with
-two conflicts resolved to his lock rename. A `fixup!` makes the revoke path
-unmap through an inode reference taken at export, because walks now also
-visit dma-bufs whose file is gone.
+instead of changing dma-buf. Both branches are based on v7.3-rc5. The first
+patch, `vfio/pci: fix use-after-free of dmabuf->file in revoke and cleanup`,
+is a mainline patch: cleanup and `->release()` decide who removes an entry
+under the dma-buf's resv lock, and the walks stop using `get_file_active()`.
+Matt's v8 patches follow with two conflicts resolved, one against his
+`dmabuf_lock` rename and one against his `vfio_pci_dma_buf_set_status()`
+refactor. A `fixup!` makes the revoke path unmap through an inode reference
+taken at export, because walks now also visit dma-bufs whose file is gone.
 
 ```sh
 ./run test v8          # Matt's v8 as posted
@@ -120,10 +136,10 @@ cd vfio-dmabuf-lab
 ```
 
 `./run` builds Linux, QEMU, static guest programs, and an initramfs, then runs
-the full kernel x test matrix. It builds seven exact Linux revisions. With
-KASAN: stock v7.3-rc6, v7.3-rc6 with each of the two dma-buf fixes, Matt's
-v8 series, and v8 on top of B1-lite. With lockdep only: Matt's v7 series, and
-Matt's v5 as the deadlock control. The v7 kernel keeps
+the full kernel x test matrix. It builds seven exact Linux revisions, all
+with lockdep: Matt's v7 series, Matt's v5 as the deadlock control, and,
+with KASAN as well, stock v7.3-rc6, v7.3-rc6 with each of the two dma-buf
+fixes, Matt's v8 series, and v8 on top of B1-lite. The v7 kernel keeps
 nvgrace's direct user access under `memory_lock`; it does not add a bounce
 buffer. Build products and serial logs are written under `out/`. Each PASS
 summary names its serial log under `out/logs/`. The first
@@ -135,16 +151,19 @@ Ninja, pkg-config, GLib and Pixman development files, `cpio`, gzip, and access
 to `/dev/kvm`.
 
 The Linux and QEMU submodules are shallow. Besides the v7 gitlink, the build
-fetches only the v5 control tip and the `dmabuf-stale-file-fix` branch (which
-also contains its v7.3-rc6 base), rather than cloning full histories.
+fetches only the branches the other kernels are pinned to: the v5 control,
+`dmabuf-stale-file-fix` (which also contains its v7.3-rc6 base),
+`dmabuf-matt-annul`, `vfio-dmabuf-mmap-v8` and `vfio-dmabuf-mmap-v8-b1lite`.
+It does not clone full histories.
 
 Useful narrower commands:
 
 ```sh
 ./run build
-./run test nvgrace-v7            # bare test: every matrix entry for it
-./run test dmabuf-opath-uaf      # runs on both rc6 and rc6-fix
+./run test nvgrace-v7            # bare test: every matrix entry (v7, v8, v8-b1lite)
+./run test dmabuf-opath-uaf      # rc6, rc6-fix, rc6-matt, v8, v8-b1lite
 ./run test dmabuf
+./run test dmabuf-v8
 ./run test nvgrace-v5
 ./run test v7:dmabuf             # one kernel:test matrix entry
 ./run test v7                    # every matrix entry for one kernel
@@ -154,10 +173,10 @@ make clean
 ```
 
 Builds parallelize by default: `./run build` runs `make -j$(nproc)`, which
-fetches sources serially, then builds the four kernels and QEMU
+fetches sources serially, then builds the seven kernels and QEMU
 concurrently (the kernels share one jobserver pool; QEMU's Ninja build
-takes a fixed `QEMU_JOBS` slice, default 8), then headers, guest tests,
-and the initramfs. `JOBS` sets the global budget (`JOBS=16 ./run
+takes a fixed `QEMU_JOBS` slice, default 8), then the v7 and v8 uapi
+headers, guest tests, and the initramfs. `JOBS` sets the global budget (`JOBS=16 ./run
 build`); bare `make build` and bare `scripts/build.sh` keep the legacy
 serial flow. `make test` runs `scripts/selftest.sh` (fast QEMU-free
 harness checks) before the matrix.
@@ -174,11 +193,10 @@ with fail-fast and a closing per-entry summary.
   adds only a lab build fix (`stdbool.h` include, sign-compare) for `-Werror`
   in the standalone selftest; the kernel code is Matt's exact tip. The
   `opsound/linux` fork's parent is `torvalds/linux`.
-- `out/src/linux-v5/`, `out/src/linux-rc6/` and `out/src/linux-rc6-fix/` are
-  automatically created worktrees at Matt's exact v5 tip, stock v7.3-rc6, and
-  the dma-buf fix. They share the `linux/` Git object store rather than
-  duplicating the repository. Exact revisions are recorded in
-  `configs/versions.env`.
+- `out/src/linux-<kernel>/` are automatically created worktrees for v5, rc6,
+  rc6-fix, rc6-matt, v8 and v8-b1lite, at the exact commits recorded in
+  `configs/versions.env`. They share the `linux/` Git object store rather
+  than duplicating the repository.
 - `qemu/` tracks `opsound/qemu:vfio-dmabuf-mmap-v6-qemu-lab`. It currently
   extends EDU with an opt-in nvgrace test personality and pins the GitHub
   mirror of QEMU's `keycodemapdb` build dependency.
@@ -188,19 +206,21 @@ with fail-fast and a closing per-entry summary.
   iommufd with an empty IOAS attached. Matt's v7 and v8 selftests, which
   live in his kernel trees, still use the VFIO group and container API, so
   the lab config enables both.
-- `configs/` contains the exact lockdep-enabled x86 kernel configuration and
-  the KASAN fragment merged on top of it for the rc6 kernels.
+- `configs/` contains the exact lockdep-enabled x86 kernel configuration,
+  which also enables the VFIO cdev, and the KASAN fragment merged on top of
+  it for the rc6 and v8 kernels.
 - `scripts/` owns host builds and QEMU launch/result checking.
 
 To edit the v7 Linux or QEMU source, commit and push in that nested repository,
 then commit the updated submodule pointer and revision manifest here. This is
-deliberately the same workflow for Linux and QEMU. The v5, rc6 and rc6-fix
-worktrees are pinned and never patched during a build.
+deliberately the same workflow for Linux and QEMU. The generated worktrees
+are pinned and never patched during a build.
 
 ## Tests
 
-`nvgrace-v7` boots the clean v7 kernel and binds the QEMU EDU device to the
-unmodified nvgrace VFIO driver. QEMU supplies the firmware memory properties,
+`nvgrace-v7` boots the v7 kernel (and, as a regression check, v8 and
+v8-b1lite) and binds the QEMU EDU device to the unmodified nvgrace VFIO
+driver. QEMU supplies the firmware memory properties,
 reserved guest RAM, and device-ready registers that real Grace hardware would
 supply. The test first confirms that faulting nvgrace user access can
 legitimately hold `memory_lock(R)` and block a config-space writer. It then
@@ -210,6 +230,11 @@ three-thread case runs ten times.
 
 `dmabuf` binds `bochs-display` to vfio-pci and runs the v7 mmap, alias,
 revocation, and cleanup test ten times.
+
+`dmabuf-v8` does the same with Matt's v8 version of that selftest, built
+against v8 uapi headers. The posted file misses `<stdbool.h>` and trips
+`-Wsign-compare`, so the lab builds it with `-include stdbool.h
+-Wno-sign-compare` instead of patching the pinned tree.
 
 `nvgrace-v5` boots Matt's exact v5 kernel with the same QEMU device. A VFIO
 pread holds `memory_lock(R)` while userfaultfd suspends its user access, a
