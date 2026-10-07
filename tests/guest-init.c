@@ -146,52 +146,50 @@ static int run_program(char *const argv[])
 	return WEXITSTATUS(status);
 }
 
-static int run_nvgrace_case(const char *group, const char *operation,
-			    const char *expectation)
+static int run_nvgrace_case(const char *operation, const char *expectation)
 {
 	char *const argv[] = {
-		"/nvgrace_uaccess_test", BDF, (char *)group,
+		"/nvgrace_uaccess_test", BDF,
 		(char *)operation, (char *)expectation, NULL,
 	};
 
 	return run_program(argv);
 }
 
-static int prepare_nvgrace(char *group, size_t group_size)
+static int prepare_nvgrace(void)
 {
 	if (access("/sys/module/nvgrace_gpu_vfio_pci", F_OK)) {
 		fprintf(stderr, "nvgrace driver is not built in\n");
 		return -1;
 	}
-	if (bind_driver("nvgrace_gpu_vfio_pci") ||
-	    iommu_group(group, group_size))
+	if (bind_driver("nvgrace_gpu_vfio_pci"))
 		return -1;
-	printf("NVGRACE_TEST_BDF=%s group=%s\n", BDF, group);
+	printf("NVGRACE_TEST_BDF=%s\n", BDF);
 	return 0;
 }
 
 static int run_nvgrace_v7(void)
 {
-	char group[32];
 	int iteration;
 
-	if (prepare_nvgrace(group, sizeof(group)))
+	if (prepare_nvgrace())
 		return 1;
 
 	/*
 	 * The variant driver may legitimately hold memory_lock across user
 	 * access.  Confirm that a config writer queues behind that access.
 	 */
-	if (run_nvgrace_case(group, "uaccess", "blocked"))
+	if (run_nvgrace_case("uaccess", "blocked"))
 		return 1;
 
 	/* Prove mmap/export progresses even with that writer queued. */
 	for (iteration = 1; iteration <= 10; iteration++)
-		if (run_nvgrace_case(group, "export", "progress"))
+		if (run_nvgrace_case("export", "progress"))
 			return 1;
 	return 0;
 }
 
+/* Matt's selftest still uses the VFIO group and container API. */
 static int run_dmabuf(char *prog)
 {
 	char group[32];
@@ -214,26 +212,22 @@ static int run_dmabuf(char *prog)
 
 static int run_dmabuf_opath_uaf(void)
 {
-	char group[32];
 	char *const argv[] = {
-		"/vfio_dmabuf_opath_uaf_test", BDF, group, NULL,
+		"/vfio_dmabuf_opath_uaf_test", BDF, NULL,
 	};
 
-	if (bind_driver("vfio-pci") || iommu_group(group, sizeof(group)))
+	if (bind_driver("vfio-pci"))
 		return 1;
-	printf("VFIO_OPATH_UAF_BDF=%s group=%s\n", BDF, group);
+	printf("VFIO_OPATH_UAF_BDF=%s\n", BDF);
 	return run_program(argv);
 }
 
 static int run_nvgrace_v5(void)
 {
-	char group[32];
-
-	if (prepare_nvgrace(group, sizeof(group)))
+	if (prepare_nvgrace())
 		return 1;
-	printf("NVGRACE_V5_CONTROL_START bdf=%s group=%s\n", BDF,
-	       group);
-	if (run_nvgrace_case(group, "export", "blocked"))
+	printf("NVGRACE_V5_CONTROL_START bdf=%s\n", BDF);
+	if (run_nvgrace_case("export", "blocked"))
 		return 1;
 	fprintf(stderr, "v5 export unexpectedly returned\n");
 	return 1;

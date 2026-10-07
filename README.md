@@ -55,19 +55,19 @@ to observe. The unfixed kernel reports (trimmed from
 
 ```
 BUG: KASAN: slab-use-after-free in get_file_active+0x79/0x250
-Write of size 8 at addr ff11000001cdb818 by task vfio_dmabuf_opa/91
+Write of size 8 at addr ff11000001d879d8 by task vfio_dmabuf_opa/89
 Call Trace:
  get_file_active+0x79/0x250
  vfio_pci_dma_buf_move+0x29a/0x650
  vfio_pci_dma_buf_cleanup+0x3c/0x270
  vfio_pci_core_close_device+0x17e/0x240
  vfio_df_close+0x216/0x420
- vfio_df_group_close+0x92/0x150
- vfio_device_fops_release+0x6f/0xb0
+ vfio_df_unbind_iommufd+0x91/0x160
+ vfio_device_fops_release+0x92/0xc0
  __fput+0x363/0xa90
  fput_close_sync+0xd8/0x190
  __x64_sys_close+0x78/0xd0
-The buggy address belongs to the object at ff11000001cdb6c0
+The buggy address belongs to the object at ff11000001d87880
  which belongs to the cache filp of size 352
 ```
 
@@ -184,7 +184,10 @@ with fail-fast and a closing per-entry summary.
   mirror of QEMU's `keycodemapdb` build dependency.
 - `tests/` contains the static PID 1 guest orchestrator (`guest-init.c`),
   the nvgrace user-access test, the dma-buf O_PATH use-after-free test, and
-  shared helpers for opening legacy VFIO container/group devices.
+  shared helpers that open a device through its VFIO cdev, bound to an
+  iommufd with an empty IOAS attached. Matt's v7 and v8 selftests, which
+  live in his kernel trees, still use the VFIO group and container API, so
+  the lab config enables both.
 - `configs/` contains the exact lockdep-enabled x86 kernel configuration and
   the KASAN fragment merged on top of it for the rc6 kernels.
 - `scripts/` owns host builds and QEMU launch/result checking.

@@ -31,12 +31,12 @@ int main(int argc, char **argv)
 		.dmabuf.nr_ranges = 1,
 		.range.length = 4096,
 	};
-	int container_fd, group_fd, dev_fd, dmabuf_fd;
+	int iommufd, dev_fd, dmabuf_fd;
 	char path[PATH_MAX];
 
-	if (argc != 3)
-		fail_msg("usage: vfio_dmabuf_opath_uaf_test PCI_BDF IOMMU_GROUP");
-	dev_fd = open_vfio_device(argv[1], argv[2], &container_fd, &group_fd);
+	if (argc != 2)
+		fail_msg("usage: vfio_dmabuf_opath_uaf_test PCI_BDF");
+	dev_fd = open_vfio_device(argv[1], &iommufd);
 
 	dmabuf_fd = ioctl(dev_fd, VFIO_DEVICE_FEATURE, &buf);
 	if (dmabuf_fd < 0)

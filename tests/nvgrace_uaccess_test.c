@@ -26,8 +26,7 @@
 #define WRITER_WAIT_MS 1500
 
 struct vfio_test_device {
-	int container_fd;
-	int group_fd;
+	int iommufd;
 	int device_fd;
 	uint64_t memory_offset;
 	uint64_t memory_size;
@@ -74,19 +73,17 @@ static struct vfio_region_info get_region(int fd, uint32_t index)
 	return region;
 }
 
-static struct vfio_test_device open_vfio(const char *bdf, const char *group)
+static struct vfio_test_device open_vfio(const char *bdf)
 {
 	struct vfio_test_device dev = {
-		.container_fd = -1,
-		.group_fd = -1,
+		.iommufd = -1,
 		.device_fd = -1,
 	};
 	struct vfio_region_info memory;
 	struct vfio_region_info config;
 	struct vfio_region_info bar0;
 
-	dev.device_fd = open_vfio_device(bdf, group, &dev.container_fd,
-					 &dev.group_fd);
+	dev.device_fd = open_vfio_device(bdf, &dev.iommufd);
 
 	memory = get_region(dev.device_fd, TEST_REGION);
 	config = get_region(dev.device_fd, VFIO_PCI_CONFIG_REGION_INDEX);
@@ -105,16 +102,15 @@ static struct vfio_test_device open_vfio(const char *bdf, const char *group)
 		  dev.config_offset + PCI_COMMAND) != sizeof(dev.command))
 		fail("read PCI command");
 
-	printf("device=%s group=%s usemem_size=%#llx command=%#x\n",
-	       bdf, group, (unsigned long long)dev.memory_size, dev.command);
+	printf("device=%s usemem_size=%#llx command=%#x\n",
+	       bdf, (unsigned long long)dev.memory_size, dev.command);
 	return dev;
 }
 
 static void close_vfio(struct vfio_test_device *dev)
 {
 	close(dev->device_fd);
-	close(dev->group_fd);
-	close(dev->container_fd);
+	close(dev->iommufd);
 }
 
 static void *io_thread(void *opaque)
@@ -389,18 +385,18 @@ int main(int argc, char **argv)
 	struct vfio_test_device dev;
 	bool expect_blocked;
 
-	if (argc != 5 || (strcmp(argv[3], "uaccess") &&
-			 strcmp(argv[3], "export")) ||
-	    (strcmp(argv[4], "blocked") && strcmp(argv[4], "progress"))) {
+	if (argc != 4 || (strcmp(argv[2], "uaccess") &&
+			 strcmp(argv[2], "export")) ||
+	    (strcmp(argv[3], "blocked") && strcmp(argv[3], "progress"))) {
 		fprintf(stderr,
-			"usage: %s BDF GROUP uaccess|export blocked|progress\n",
+			"usage: %s BDF uaccess|export blocked|progress\n",
 			argv[0]);
 		return EXIT_FAILURE;
 	}
-	expect_blocked = !strcmp(argv[4], "blocked");
+	expect_blocked = !strcmp(argv[3], "blocked");
 
-	dev = open_vfio(argv[1], argv[2]);
-	if (!strcmp(argv[3], "uaccess")) {
+	dev = open_vfio(argv[1]);
+	if (!strcmp(argv[2], "uaccess")) {
 		run_fault_case(&dev, false, expect_blocked);
 		run_fault_case(&dev, true, expect_blocked);
 	} else {
@@ -408,6 +404,6 @@ int main(int argc, char **argv)
 	}
 	close_vfio(&dev);
 
-	printf("PASS: nvgrace %s %s mode\n", argv[3], argv[4]);
+	printf("PASS: nvgrace %s %s mode\n", argv[2], argv[3]);
 	return EXIT_SUCCESS;
 }
