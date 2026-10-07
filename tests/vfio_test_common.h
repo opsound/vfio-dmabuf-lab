@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <linux/vfio.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,7 +33,7 @@ static int open_vfio_device(const char *bdf, const char *group,
 			    int *container_fd, int *group_fd)
 {
 	struct vfio_group_status status = { .argsz = sizeof(status) };
-	char path[128];
+	char path[PATH_MAX];
 	int device_fd;
 
 	*container_fd = open("/dev/vfio/vfio", O_RDWR);

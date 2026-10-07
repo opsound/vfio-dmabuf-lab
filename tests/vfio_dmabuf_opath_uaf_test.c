@@ -11,6 +11,7 @@
  * RCU grace period, so KASAN reports the access.
  */
 
+#include <limits.h>
 #include <stdint.h>
 
 #include "vfio_test_common.h"
@@ -31,7 +32,7 @@ int main(int argc, char **argv)
 		.range.length = 4096,
 	};
 	int container_fd, group_fd, dev_fd, dmabuf_fd;
-	char path[64];
+	char path[PATH_MAX];
 
 	if (argc != 3)
 		fail_msg("usage: vfio_dmabuf_opath_uaf_test PCI_BDF IOMMU_GROUP");
