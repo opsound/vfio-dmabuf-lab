@@ -12,7 +12,7 @@ have_flock=0
 usage()
 {
 	echo "usage: $0 [--jobs N] [--dry-run] [all|<kernel>|<test>|<kernel>:<test>]" >&2
-	echo "  kernels: v5 v7 rc6 rc6-fix rc6-matt v8 v8-b1lite" >&2
+	echo "  kernels: v5 v7 rc6 rc6-fix rc6-annul v8 v8-annul" >&2
 	echo "  tests: nvgrace-v7 dmabuf nvgrace-v5 dmabuf-opath-uaf dmabuf-v8" >&2
 	exit 2
 }
@@ -94,13 +94,13 @@ MATRIX=(
 	"v5 nvgrace-v5 deadlock-timeout"
 	"rc6 dmabuf-opath-uaf kasan-uaf"
 	"rc6-fix dmabuf-opath-uaf clean"
-	"rc6-matt dmabuf-opath-uaf clean"
+	"rc6-annul dmabuf-opath-uaf clean"
 	"v8 dmabuf-v8 clean"
 	"v8 dmabuf-opath-uaf kasan-uaf"
-	"v8-b1lite dmabuf-v8 clean"
-	"v8-b1lite dmabuf-opath-uaf clean"
+	"v8-annul dmabuf-v8 clean"
+	"v8-annul dmabuf-opath-uaf clean"
 	"v8 nvgrace-v7 clean"
-	"v8-b1lite nvgrace-v7 clean"
+	"v8-annul nvgrace-v7 clean"
 )
 
 matrix_expectation()
@@ -142,7 +142,7 @@ kernel_image()
 	v7)
 		echo "${root}/out/linux-v7/arch/x86/boot/bzImage"
 		;;
-	rc6|rc6-fix|rc6-matt|v8|v8-b1lite)
+	rc6|rc6-fix|rc6-annul|v8|v8-annul)
 		echo "${root}/out/linux-$1/arch/x86/boot/bzImage"
 		;;
 	*)

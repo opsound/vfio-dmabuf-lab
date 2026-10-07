@@ -40,13 +40,13 @@ v7:dmabuf
 v5:nvgrace-v5
 rc6:dmabuf-opath-uaf
 rc6-fix:dmabuf-opath-uaf
-rc6-matt:dmabuf-opath-uaf
+rc6-annul:dmabuf-opath-uaf
 v8:dmabuf-v8
 v8:dmabuf-opath-uaf
-v8-b1lite:dmabuf-v8
-v8-b1lite:dmabuf-opath-uaf
+v8-annul:dmabuf-v8
+v8-annul:dmabuf-opath-uaf
 v8:nvgrace-v7
-v8-b1lite:nvgrace-v7"
+v8-annul:nvgrace-v7"
 check "dry-run all" "${all}" "$("${runner}" --dry-run all)"
 check "dry-run all with --jobs" "${all}" "$("${runner}" --jobs 4 --dry-run all)"
 check "dry-run default selection" "${all}" "$("${runner}" --dry-run)"
@@ -58,9 +58,9 @@ v7:dmabuf" "$("${runner}" --dry-run v7)"
 check "dry-run test" "v7:dmabuf" "$("${runner}" --dry-run dmabuf)"
 check "dry-run test, several kernels" "rc6:dmabuf-opath-uaf
 rc6-fix:dmabuf-opath-uaf
-rc6-matt:dmabuf-opath-uaf
+rc6-annul:dmabuf-opath-uaf
 v8:dmabuf-opath-uaf
-v8-b1lite:dmabuf-opath-uaf" "$("${runner}" --dry-run dmabuf-opath-uaf)"
+v8-annul:dmabuf-opath-uaf" "$("${runner}" --dry-run dmabuf-opath-uaf)"
 check "dry-run kernel rc6-fix" "rc6-fix:dmabuf-opath-uaf" "$("${runner}" --dry-run rc6-fix)"
 check "dry-run k:t" "v5:nvgrace-v5" "$("${runner}" --dry-run v5:nvgrace-v5)"
 

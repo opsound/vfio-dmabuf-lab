@@ -17,24 +17,38 @@ O_PATH fd, so `dmabuf->file` keeps pointing at freed memory.
 the device is reset, enters D3hot, or has memory decoding disabled, and
 `vfio_pci_dma_buf_cleanup()` calls it when the device is closed.
 
-The fix is one patch on v7.3-rc6, branch `dmabuf-stale-file-fix` in
-`opsound/linux`:
+Matt Evans posted the fix, `dma-buf: Annul dmabuf->file on file release`
+(Message-ID `f8efaabd-c06e-4f04-8cfa-489c148e37ba@ozlabs.org`). It sets
+`dmabuf->file` to NULL in `dma_buf_file_release()`, so `get_file_active()`
+sees NULL once the file can have been freed. Christian König asked for it to
+be reviewed and backported first, with a documented `dma_buf_get_active()`
+helper to follow. Matt's v8 of "vfio/pci: Add mmap() for DMABUFs"
+(Message-ID `20261006193643.76330-1-matt@ozlabs.org`) points at that fix,
+because the series adds another `dmabuf->file` dereference in its revoke
+path.
 
-- `dma-buf: fix use-after-free of dmabuf->file while the dentry is held`
+The lab tests the fix on mainline and under the v8 series:
 
-It runs the exporter's `->release()` from the file release again and leaves
-only the name and the `struct dma_buf` itself for `d_release`, because
-`dmabuffs_dname()` reads nothing else.
+| kernel     | what it is                                              |
+|------------|---------------------------------------------------------|
+| rc6        | stock v7.3-rc6                                          |
+| rc6-annul  | v7.3-rc6 + Matt's fix (branch `dmabuf-matt-annul`)      |
+| rc6-fix    | v7.3-rc6 + an alternative fix (branch `dmabuf-stale-file-fix`) |
+| v8         | Matt's v8 as posted, on v7.3-rc6                        |
+| v8-annul   | v7.3-rc6 + Matt's fix + v8 (branch `vfio-dmabuf-mmap-v8-annul`) |
 
-To reproduce on stock v7.3-rc6 and check the fixes:
+`v8` is Matt's `dev/mev/vfio-dmabuf-mmap-v8` branch, which his cover letter
+links. Its nine series patches match the posted ones by patch-id, and it adds
+his RFC selftest.
+
+To reproduce and check the fix:
 
 ```sh
 ./run build
 ./run test dmabuf-opath-uaf
 ```
 
-This boots every kernel with a `dmabuf-opath-uaf` entry. rc6 and v8 are
-expected to hit the use-after-free; rc6-fix, rc6-matt and v8-b1lite carry a
+rc6 and v8 are expected to hit the use-after-free; the other three carry a
 fix and are expected to run clean:
 
 ```
@@ -42,12 +56,12 @@ fix and are expected to run clean:
 PASS: rc6:dmabuf-opath-uaf; expected KASAN use-after-free reproduced; log: .../out/logs/rc6-dmabuf-opath-uaf.log
 ==> Running rc6-fix:dmabuf-opath-uaf (expect clean)
 PASS: rc6-fix:dmabuf-opath-uaf; log: .../out/logs/rc6-fix-dmabuf-opath-uaf.log
-==> Running rc6-matt:dmabuf-opath-uaf (expect clean)
-PASS: rc6-matt:dmabuf-opath-uaf; log: .../out/logs/rc6-matt-dmabuf-opath-uaf.log
+==> Running rc6-annul:dmabuf-opath-uaf (expect clean)
+PASS: rc6-annul:dmabuf-opath-uaf; log: .../out/logs/rc6-annul-dmabuf-opath-uaf.log
 ==> Running v8:dmabuf-opath-uaf (expect kasan-uaf)
 PASS: v8:dmabuf-opath-uaf; expected KASAN use-after-free reproduced; log: .../out/logs/v8-dmabuf-opath-uaf.log
-==> Running v8-b1lite:dmabuf-opath-uaf (expect clean)
-PASS: v8-b1lite:dmabuf-opath-uaf; log: .../out/logs/v8-b1lite-dmabuf-opath-uaf.log
+==> Running v8-annul:dmabuf-opath-uaf (expect clean)
+PASS: v8-annul:dmabuf-opath-uaf; log: .../out/logs/v8-annul-dmabuf-opath-uaf.log
 ```
 
 `tests/vfio_dmabuf_opath_uaf_test.c` is the whole reproducer, with no loop:
@@ -56,13 +70,12 @@ close N, sleep 100 ms, close the VFIO device. The device close runs
 `vfio_pci_dma_buf_cleanup()`, which walks the entry whose file is gone.
 One pass is enough: it reproduced on 10 of 10 boots each on rc6 and v8.
 
-The rc6, rc6-fix, rc6-matt, v8 and v8-b1lite kernels use
-`configs/kasan.config` on top of the lab config. `CONFIG_SLUB_RCU_DEBUG`
-frees `struct file` only after an RCU grace period, which is what the sleep
-waits for; without the sleep, 0 of 10 boots each on rc6 and v8 reported
-anything. Without `SLUB_RCU_DEBUG` the freed slot can be reused instead:
-the walk then takes a reference on an unrelated file, which leaves no trace
-to observe. The unfixed kernel reports (trimmed from
+These five kernels use `configs/kasan.config` on top of the lab config.
+`CONFIG_SLUB_RCU_DEBUG` frees `struct file` only after an RCU grace period,
+which is what the sleep waits for; without the sleep, 0 of 10 boots each on
+rc6 and v8 reported anything. Without `SLUB_RCU_DEBUG` the freed slot can be
+reused instead: the walk then takes a reference on an unrelated file, which
+leaves no trace to observe. The unfixed kernel reports (trimmed from
 `out/logs/rc6-dmabuf-opath-uaf.log`):
 
 ```
@@ -83,49 +96,19 @@ The buggy address belongs to the object at ff11000001d87880
  which belongs to the cache filp of size 352
 ```
 
-Matt Evans posted a different dma-buf fix, `dma-buf: Annul dmabuf->file on
-file release` (Message-ID `f8efaabd-c06e-4f04-8cfa-489c148e37ba@ozlabs.org`),
-which clears `dmabuf->file` in `dma_buf_file_release()`. The `rc6-matt`
-kernel is v7.3-rc6 with that patch (branch `dmabuf-matt-annul`), and it
-passes the same test:
+Matt's fix as posted dereferences `dmabuf` without a NULL check, but
+`dma_buf_file_release()` also runs with a NULL `private_data` when
+`dma_buf_export()` fails after allocating the file. That error path is not
+exercised here.
 
-```sh
-./run test rc6-matt:dmabuf-opath-uaf
-```
-
-vmwgfx's cached `prime->dma_buf` has the same stale-file problem. The
-`dmabuf-stale-file-fix` patch covers it, because vmwgfx clears that pointer
-in `->release()`, which then runs before the file is freed. Matt's patch
-does not: vmwgfx would read a NULL `dmabuf->file` instead, as his posting
-points out. That path is not exercised here: QEMU's `vmware-svga` has no
-pitchlock capability, so vmwgfx refuses to probe ("Hardware has no
-pitchlock").
-
-### vfio-only variant on Matt's v8 (B1-lite)
-
-`vfio-dmabuf-mmap-v8-b1lite` stages a vfio-only fix under Matt's v8 series
-instead of changing dma-buf. Both branches are based on v7.3-rc5. The first
-patch, `vfio/pci: fix use-after-free of dmabuf->file in revoke and cleanup`,
-is a mainline patch: cleanup and `->release()` decide who removes an entry
-under the dma-buf's resv lock, and the walks stop using `get_file_active()`.
-Matt's v8 patches follow with two conflicts resolved, one against his
-`dmabuf_lock` rename and one against his `vfio_pci_dma_buf_set_status()`
-refactor. A `fixup!` makes the revoke path unmap through an inode reference
-taken at export, because walks now also visit dma-bufs whose file is gone.
-
-```sh
-./run test v8          # Matt's v8 as posted
-./run test v8-b1lite   # the same series on top of B1-lite
-```
-
-| kernel    | dmabuf-v8 (Matt's selftest) | dmabuf-opath-uaf      | nvgrace-v7 |
-|-----------|-----------------------------|-----------------------|------------|
-| v8        | clean PASS                  | KASAN use-after-free  | clean PASS |
-| v8-b1lite | clean PASS                  | clean PASS            | clean PASS |
-
-Because the O_PATH fd outlives the device close, on v8-b1lite
-`vfio_pci_dma_buf_cleanup()` detaches an entry whose file is gone, and
-`->release()` runs at process exit with `priv->vdev` already cleared.
+The alternative fix in rc6-fix runs the exporter's `->release()` from the
+file release again and leaves only the name and the `struct dma_buf` for
+`d_release`, because `dmabuffs_dname()` reads nothing else. Unlike Matt's
+fix, it also covers vmwgfx, which keeps a non-refcounted `prime->dma_buf`
+and clears it in `->release()`; with Matt's fix vmwgfx would read a NULL
+`dmabuf->file` instead, as his posting points out. Neither vmwgfx path is
+exercised here: QEMU's `vmware-svga` has no pitchlock capability, so vmwgfx
+refuses to probe ("Hardware has no pitchlock").
 
 ## One-command run
 
@@ -138,8 +121,7 @@ cd vfio-dmabuf-lab
 `./run` builds Linux, QEMU, static guest programs, and an initramfs, then runs
 the full kernel x test matrix. It builds seven exact Linux revisions, all
 with lockdep: Matt's v7 series, Matt's v5 as the deadlock control, and,
-with KASAN as well, stock v7.3-rc6, v7.3-rc6 with each of the two dma-buf
-fixes, Matt's v8 series, and v8 on top of B1-lite. The v7 kernel keeps
+with KASAN as well, the five kernels in the table above. The v7 kernel keeps
 nvgrace's direct user access under `memory_lock`; it does not add a bounce
 buffer. Build products and serial logs are written under `out/`. Each PASS
 summary names its serial log under `out/logs/`. The first
@@ -153,15 +135,15 @@ to `/dev/kvm`.
 The Linux and QEMU submodules are shallow. Besides the v7 gitlink, the build
 fetches only the branches the other kernels are pinned to: the v5 control,
 `dmabuf-stale-file-fix` (which also contains its v7.3-rc6 base),
-`dmabuf-matt-annul`, `vfio-dmabuf-mmap-v8` and `vfio-dmabuf-mmap-v8-b1lite`.
+`dmabuf-matt-annul`, `vfio-dmabuf-mmap-v8` and `vfio-dmabuf-mmap-v8-annul`.
 It does not clone full histories.
 
 Useful narrower commands:
 
 ```sh
 ./run build
-./run test nvgrace-v7            # bare test: every matrix entry (v7, v8, v8-b1lite)
-./run test dmabuf-opath-uaf      # rc6, rc6-fix, rc6-matt, v8, v8-b1lite
+./run test nvgrace-v7            # bare test: every matrix entry (v7, v8, v8-annul)
+./run test dmabuf-opath-uaf      # rc6, rc6-fix, rc6-annul, v8, v8-annul
 ./run test dmabuf
 ./run test dmabuf-v8
 ./run test nvgrace-v5
@@ -194,7 +176,7 @@ with fail-fast and a closing per-entry summary.
   in the standalone selftest; the kernel code is Matt's exact tip. The
   `opsound/linux` fork's parent is `torvalds/linux`.
 - `out/src/linux-<kernel>/` are automatically created worktrees for v5, rc6,
-  rc6-fix, rc6-matt, v8 and v8-b1lite, at the exact commits recorded in
+  rc6-fix, rc6-annul, v8 and v8-annul, at the exact commits recorded in
   `configs/versions.env`. They share the `linux/` Git object store rather
   than duplicating the repository.
 - `qemu/` tracks `opsound/qemu:vfio-dmabuf-mmap-v6-qemu-lab`. It currently
@@ -219,7 +201,7 @@ are pinned and never patched during a build.
 ## Tests
 
 `nvgrace-v7` boots the v7 kernel (and, as a regression check, v8 and
-v8-b1lite) and binds the QEMU EDU device to the unmodified nvgrace VFIO
+v8-annul) and binds the QEMU EDU device to the unmodified nvgrace VFIO
 driver. QEMU supplies the firmware memory properties,
 reserved guest RAM, and device-ready registers that real Grace hardware would
 supply. The test first confirms that faulting nvgrace user access can
@@ -232,7 +214,7 @@ three-thread case runs ten times.
 revocation, and cleanup test ten times.
 
 `dmabuf-v8` does the same with Matt's v8 version of that selftest, built
-against v8 uapi headers. The posted file misses `<stdbool.h>` and trips
+against v8 uapi headers. The selftest misses `<stdbool.h>` and trips
 `-Wsign-compare`, so the lab builds it with `-include stdbool.h
 -Wno-sign-compare` instead of patching the pinned tree.
 
@@ -246,7 +228,7 @@ reports the circular dependency and the guest remains deadlocked until the
 
 `dmabuf-opath-uaf` is described in the dma-buf section above. On rc6 and v8, success
 means KASAN reports a `filp` use-after-free in `get_file_active()` called from
-`vfio_pci_dma_buf_move()`. On rc6-fix, rc6-matt and v8-b1lite, it means a
+`vfio_pci_dma_buf_move()`. On rc6-fix, rc6-annul and v8-annul, it means a
 clean run.
 
 The runner executes a kernel x test x expectation matrix; only the listed
@@ -259,13 +241,13 @@ combinations run:
 | v5         | nvgrace-v5    | deadlock, host timeout      |
 | rc6        | dmabuf-opath-uaf | KASAN use-after-free     |
 | rc6-fix    | dmabuf-opath-uaf | clean PASS               |
-| rc6-matt   | dmabuf-opath-uaf | clean PASS               |
+| rc6-annul  | dmabuf-opath-uaf | clean PASS               |
 | v8         | dmabuf-v8        | clean PASS               |
 | v8         | dmabuf-opath-uaf | KASAN use-after-free     |
 | v8         | nvgrace-v7       | clean PASS               |
-| v8-b1lite  | dmabuf-v8        | clean PASS               |
-| v8-b1lite  | dmabuf-opath-uaf | clean PASS               |
-| v8-b1lite  | nvgrace-v7       | clean PASS               |
+| v8-annul   | dmabuf-v8        | clean PASS               |
+| v8-annul   | dmabuf-opath-uaf | clean PASS               |
+| v8-annul   | nvgrace-v7       | clean PASS               |
 
 Verdicts read result markers from a dedicated channel, not the shared serial
 console: QEMU attaches a second serial port, guest PID 1 writes exactly one

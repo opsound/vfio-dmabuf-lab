@@ -16,11 +16,11 @@ linux_rc6_fix_src="${out}/src/linux-rc6-fix"
 linux_rc6_fix_build="${out}/linux-rc6-fix"
 linux_v8_src="${out}/src/linux-v8"
 linux_v8_build="${out}/linux-v8"
-linux_v8_b1lite_src="${out}/src/linux-v8-b1lite"
-linux_v8_b1lite_build="${out}/linux-v8-b1lite"
+linux_v8_annul_src="${out}/src/linux-v8-annul"
+linux_v8_annul_build="${out}/linux-v8-annul"
 headers_v8="${out}/headers-v8"
-linux_rc6_matt_src="${out}/src/linux-rc6-matt"
-linux_rc6_matt_build="${out}/linux-rc6-matt"
+linux_rc6_annul_src="${out}/src/linux-rc6-annul"
+linux_rc6_annul_build="${out}/linux-rc6-annul"
 qemu_build="${out}/qemu"
 test_build="${out}/tests"
 headers="${out}/headers"
@@ -59,12 +59,12 @@ fetch_all()
 		"${LINUX_RC6_FIX_COMMIT}" "${LINUX_FIX_REF}"
 	ensure_kernel_source rc6 "${linux_rc6_src}" "${LINUX_RC6_COMMIT}" \
 		"${LINUX_FIX_REF}"
-	ensure_kernel_source rc6-matt "${linux_rc6_matt_src}" \
-		"${LINUX_RC6_MATT_COMMIT}" "${LINUX_MATT_FIX_REF}"
+	ensure_kernel_source rc6-annul "${linux_rc6_annul_src}" \
+		"${LINUX_RC6_ANNUL_COMMIT}" "${LINUX_MATT_FIX_REF}"
 	ensure_kernel_source v8 "${linux_v8_src}" "${LINUX_V8_COMMIT}" \
 		"${LINUX_V8_REF}"
-	ensure_kernel_source v8-b1lite "${linux_v8_b1lite_src}" \
-		"${LINUX_V8_B1LITE_COMMIT}" "${LINUX_V8_B1LITE_REF}"
+	ensure_kernel_source v8-annul "${linux_v8_annul_src}" \
+		"${LINUX_V8_ANNUL_COMMIT}" "${LINUX_V8_ANNUL_REF}"
 }
 
 ensure_kernel_source()
@@ -140,9 +140,9 @@ build_one_kernel() # name
 		build="${linux_rc6_fix_build}"
 		fragment="${root}/configs/kasan.config"
 		;;
-	rc6-matt)
-		source="${linux_rc6_matt_src}"
-		build="${linux_rc6_matt_build}"
+	rc6-annul)
+		source="${linux_rc6_annul_src}"
+		build="${linux_rc6_annul_build}"
 		fragment="${root}/configs/kasan.config"
 		;;
 	v8)
@@ -150,9 +150,9 @@ build_one_kernel() # name
 		build="${linux_v8_build}"
 		fragment="${root}/configs/kasan.config"
 		;;
-	v8-b1lite)
-		source="${linux_v8_b1lite_src}"
-		build="${linux_v8_b1lite_build}"
+	v8-annul)
+		source="${linux_v8_annul_src}"
+		build="${linux_v8_annul_build}"
 		fragment="${root}/configs/kasan.config"
 		;;
 	*)
@@ -301,9 +301,9 @@ all)
 	build_one_kernel v7
 	build_one_kernel rc6
 	build_one_kernel rc6-fix
-	build_one_kernel rc6-matt
+	build_one_kernel rc6-annul
 	build_one_kernel v8
-	build_one_kernel v8-b1lite
+	build_one_kernel v8-annul
 	build_headers
 	build_headers_v8
 	build_qemu
