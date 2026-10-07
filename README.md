@@ -39,31 +39,46 @@ PASS: rc6:dmabuf-opath-uaf; expected KASAN use-after-free reproduced; log: .../o
 PASS: rc6-fix:dmabuf-opath-uaf; log: .../out/logs/rc6-fix-dmabuf-opath-uaf.log
 ```
 
-`tests/vfio_dmabuf_opath_uaf_test.c` binds `bochs-display` to vfio-pci and
-exports one dma-buf that stays open. Ten times, it exports another, holds
-it with O_PATH, closes the dma-buf fd, sleeps 200 ms, and clears
-`PCI_COMMAND_MEMORY` through the VFIO config region.
+`tests/vfio_dmabuf_opath_uaf_test.c` is the whole reproducer, with no loop:
+export one page of BAR0 as a dma-buf, open `/proc/self/fd/N` with O_PATH,
+close N, sleep 100 ms, close the VFIO device. The device close runs
+`vfio_pci_dma_buf_cleanup()`, which walks the entry whose file is gone.
+One pass reproduces it every time (10 of 10 boots each on rc6 and v8).
 
 Both kernels use `configs/kasan.config` on top of the lab config.
-`CONFIG_SLUB_RCU_DEBUG` delays `struct file` frees by an RCU grace period so
-KASAN can see them. Without it, the freed slot is usually reused instead:
+`CONFIG_SLUB_RCU_DEBUG` frees `struct file` only after an RCU grace period,
+which is what the sleep waits for; without it, 0 of 10 boots reported
+anything. Without `SLUB_RCU_DEBUG` the freed slot is usually reused instead:
 the walk then takes a reference on an unrelated file, which leaves no trace
-to observe. The unfixed kernel reports (trimmed from `out/logs/rc6-dmabuf-opath-uaf.log`):
+to observe. The unfixed kernel reports (trimmed from
+`out/logs/rc6-dmabuf-opath-uaf.log`):
 
 ```
 BUG: KASAN: slab-use-after-free in get_file_active+0x79/0x250
-Write of size 8 at addr ff110000029df118 by task vfio_dmabuf_opa/90
+Write of size 8 at addr ff11000001cdb818 by task vfio_dmabuf_opa/91
 Call Trace:
  get_file_active+0x79/0x250
  vfio_pci_dma_buf_move+0x29a/0x650
- vfio_basic_config_write+0x245/0xa80
- vfio_pci_config_rw_single+0x37d/0x7a0
- vfio_pci_config_rw+0xdb/0x180
- vfio_pci_rw+0x20b/0x390
- vfs_write+0x20a/0xff0
- __x64_sys_pwrite64+0x185/0x1e0
-The buggy address belongs to the object at ff110000029defc0
+ vfio_pci_dma_buf_cleanup+0x3c/0x270
+ vfio_pci_core_close_device+0x17e/0x240
+ vfio_df_close+0x216/0x420
+ vfio_df_group_close+0x92/0x150
+ vfio_device_fops_release+0x6f/0xb0
+ __fput+0x363/0xa90
+ fput_close_sync+0xd8/0x190
+ __x64_sys_close+0x78/0xd0
+The buggy address belongs to the object at ff11000001cdb6c0
  which belongs to the cache filp of size 352
+```
+
+Matt Evans posted a different dma-buf fix, `dma-buf: Annul dmabuf->file on
+file release` (Message-ID `f8efaabd-c06e-4f04-8cfa-489c148e37ba@ozlabs.org`),
+which clears `dmabuf->file` in `dma_buf_file_release()`. The `rc6-matt`
+kernel is v7.3-rc6 with that patch (branch `dmabuf-matt-annul`), and it
+passes the same test:
+
+```sh
+./run test rc6-matt:dmabuf-opath-uaf
 ```
 
 vmwgfx's cached `prime->dma_buf` has the same stale-file problem, and the fix
@@ -92,9 +107,9 @@ visit dma-bufs whose file is gone.
 | v8        | clean PASS                  | KASAN use-after-free  | clean PASS |
 | v8-b1lite | clean PASS                  | clean PASS            | clean PASS |
 
-The O_PATH test also keeps one released dma-buf across the device close,
-so on v8-b1lite `vfio_pci_dma_buf_cleanup()` detaches an entry whose file
-is gone and `->release()` runs afterwards with `priv->vdev` cleared.
+Because the O_PATH fd outlives the device close, on v8-b1lite
+`vfio_pci_dma_buf_cleanup()` detaches an entry whose file is gone, and
+`->release()` runs at process exit with `priv->vdev` already cleared.
 
 ## One-command run
 
@@ -105,9 +120,10 @@ cd vfio-dmabuf-lab
 ```
 
 `./run` builds Linux, QEMU, static guest programs, and an initramfs, then runs
-the full kernel x test matrix. It builds four exact Linux revisions: stock
-v7.3-rc6 and the same base with the dma-buf fix, both with KASAN, plus Matt's
-v7 series and Matt's v5 as the deadlock control. The v7 kernel keeps
+the full kernel x test matrix. It builds seven exact Linux revisions. With
+KASAN: stock v7.3-rc6, v7.3-rc6 with each of the two dma-buf fixes, Matt's
+v8 series, and v8 on top of B1-lite. With lockdep only: Matt's v7 series, and
+Matt's v5 as the deadlock control. The v7 kernel keeps
 nvgrace's direct user access under `memory_lock`; it does not add a bounce
 buffer. Build products and serial logs are written under `out/`. Each PASS
 summary names its serial log under `out/logs/`. The first
@@ -200,9 +216,10 @@ user fault then needs `mmap_lock`, closing the cycle. Success means lockdep
 reports the circular dependency and the guest remains deadlocked until the
 15-second host timeout.
 
-`dmabuf-opath-uaf` is described in the dma-buf section above. On rc6, success
+`dmabuf-opath-uaf` is described in the dma-buf section above. On rc6 and v8, success
 means KASAN reports a `filp` use-after-free in `get_file_active()` called from
-`vfio_pci_dma_buf_move()`. On rc6-fix, it means a clean run.
+`vfio_pci_dma_buf_move()`. On rc6-fix, rc6-matt and v8-b1lite, it means a
+clean run.
 
 The runner executes a kernel x test x expectation matrix; only the listed
 combinations run:
@@ -214,6 +231,7 @@ combinations run:
 | v5         | nvgrace-v5    | deadlock, host timeout      |
 | rc6        | dmabuf-opath-uaf | KASAN use-after-free     |
 | rc6-fix    | dmabuf-opath-uaf | clean PASS               |
+| rc6-matt   | dmabuf-opath-uaf | clean PASS               |
 | v8         | dmabuf-v8        | clean PASS               |
 | v8         | dmabuf-opath-uaf | KASAN use-after-free     |
 | v8         | nvgrace-v7       | clean PASS               |

@@ -40,6 +40,7 @@ v7:dmabuf
 v5:nvgrace-v5
 rc6:dmabuf-opath-uaf
 rc6-fix:dmabuf-opath-uaf
+rc6-matt:dmabuf-opath-uaf
 v8:dmabuf-v8
 v8:dmabuf-opath-uaf
 v8-b1lite:dmabuf-v8
@@ -57,6 +58,7 @@ v7:dmabuf" "$("${runner}" --dry-run v7)"
 check "dry-run test" "v7:dmabuf" "$("${runner}" --dry-run dmabuf)"
 check "dry-run test, several kernels" "rc6:dmabuf-opath-uaf
 rc6-fix:dmabuf-opath-uaf
+rc6-matt:dmabuf-opath-uaf
 v8:dmabuf-opath-uaf
 v8-b1lite:dmabuf-opath-uaf" "$("${runner}" --dry-run dmabuf-opath-uaf)"
 check "dry-run kernel rc6-fix" "rc6-fix:dmabuf-opath-uaf" "$("${runner}" --dry-run rc6-fix)"

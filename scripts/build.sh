@@ -19,6 +19,8 @@ linux_v8_build="${out}/linux-v8"
 linux_v8_b1lite_src="${out}/src/linux-v8-b1lite"
 linux_v8_b1lite_build="${out}/linux-v8-b1lite"
 headers_v8="${out}/headers-v8"
+linux_rc6_matt_src="${out}/src/linux-rc6-matt"
+linux_rc6_matt_build="${out}/linux-rc6-matt"
 qemu_build="${out}/qemu"
 test_build="${out}/tests"
 headers="${out}/headers"
@@ -57,6 +59,8 @@ fetch_all()
 		"${LINUX_RC6_FIX_COMMIT}" "${LINUX_FIX_REF}"
 	ensure_kernel_source rc6 "${linux_rc6_src}" "${LINUX_RC6_COMMIT}" \
 		"${LINUX_FIX_REF}"
+	ensure_kernel_source rc6-matt "${linux_rc6_matt_src}" \
+		"${LINUX_RC6_MATT_COMMIT}" "${LINUX_MATT_FIX_REF}"
 	ensure_kernel_source v8 "${linux_v8_src}" "${LINUX_V8_COMMIT}" \
 		"${LINUX_V8_REF}"
 	ensure_kernel_source v8-b1lite "${linux_v8_b1lite_src}" \
@@ -134,6 +138,11 @@ build_one_kernel() # name
 	rc6-fix)
 		source="${linux_rc6_fix_src}"
 		build="${linux_rc6_fix_build}"
+		fragment="${root}/configs/kasan.config"
+		;;
+	rc6-matt)
+		source="${linux_rc6_matt_src}"
+		build="${linux_rc6_matt_build}"
 		fragment="${root}/configs/kasan.config"
 		;;
 	v8)
@@ -292,6 +301,7 @@ all)
 	build_one_kernel v7
 	build_one_kernel rc6
 	build_one_kernel rc6-fix
+	build_one_kernel rc6-matt
 	build_one_kernel v8
 	build_one_kernel v8-b1lite
 	build_headers
